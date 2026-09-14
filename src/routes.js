@@ -1415,7 +1415,7 @@ async function route(req, res) {
     const type = q.type || 'all';
     let posts = [], users = [], coms = [];
     if (type==='all'||type==='posts') {
-      const rows = await Q.pSearch('%'+sq+'%','%'+sq+'%');
+      const rows = await Q.pSearch(sq);
       for (const r of rows) posts.push(await fmtPost(r,u2));
     }
     if (type==='all'||type==='users') users = await Q.uSearch('%'+sq+'%','%'+sq+'%');

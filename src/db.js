@@ -296,7 +296,17 @@ const Q = {
   pOwner:  (id) => db.get('SELECT user_id,community_id FROM posts WHERE id=$1', [id]),
   pScore:  (score, upvotes, downvotes, id) => db.run('UPDATE posts SET score=$1,upvotes=$2,downvotes=$3 WHERE id=$4', [score, upvotes, downvotes, id]),
   pIncCmt: (id) => db.run('UPDATE posts SET comment_count=comment_count+1 WHERE id=$1', [id]),
-  pSearch: (p1, p2) => db.all('SELECT p.*,u.username,u.color,u.avatar,c.slug as cslug,c.name as cname,c.color as ccolor FROM posts p JOIN users u ON p.user_id=u.id JOIN communities c ON p.community_id=c.id WHERE lower(p.title) LIKE $1 OR lower(p.body) LIKE $2 ORDER BY p.score DESC LIMIT 20', [p1, p2]),
+  // To'liq matnli qidiruv (GIN indeksli search_vector orqali — LIKE emas).
+  // plainto_tsquery so'zlarni avtomatik AND bilan bog'laydi va maxsus belgilarni
+  // xavfsiz ishlaydi (foydalanuvchi kiritgan matnni to'g'ridan-to'g'ri qabul qiladi).
+  pSearch: (query) => db.all(
+    `SELECT p.*,u.username,u.color,u.avatar,c.slug as cslug,c.name as cname,c.color as ccolor,
+       ts_rank(p.search_vector, plainto_tsquery('simple', $1)) as rank
+     FROM posts p JOIN users u ON p.user_id=u.id JOIN communities c ON p.community_id=c.id
+     WHERE p.search_vector @@ plainto_tsquery('simple', $1)
+     ORDER BY rank DESC, p.score DESC LIMIT 20`,
+    [query]
+  ),
   pSaved:  (user_id) => db.all('SELECT p.*,u.username,u.color,u.avatar,c.slug as cslug,c.name as cname,c.color as ccolor FROM posts p JOIN users u ON p.user_id=u.id JOIN communities c ON p.community_id=c.id JOIN saved_posts sp ON sp.post_id=p.id WHERE sp.user_id=$1 ORDER BY sp.saved_at DESC', [user_id]),
 
   /* post votes */
