@@ -3,9 +3,11 @@ const crypto = require('crypto');
 const fs   = require('fs');
 const path = require('path');
 const url  = require('url');
-const { Q, hmac, db } = require('./db');
-const { verifyToken, makeToken, uid, randColor } = require('./helpers');
+const { Q, db } = require('./db');
+const { verifyToken, makeToken, uid, randColor, hashPassword, verifyPassword, isScryptHash } = require('./helpers');
 const ws = require('./ws');
+const { corsHeaders } = require('./cors');
+const { checkRateLimit, checkRateLimitByUser } = require('./ratelimit');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 const UPLOAD   = path.join(DATA_DIR, 'uploads');
@@ -13,18 +15,30 @@ if (!fs.existsSync(UPLOAD)) fs.mkdirSync(UPLOAD, { recursive: true });
 const tgPendingProfiles = new Map();
 
 /* ── helpers ── */
+// CORS + xavfsizlik headerlari res.setHeader bilan oldindan qo'yiladi (route()
+// boshida), shuning uchun json() ularni qayta yozib yubormasligi uchun faqat
+// Content-Type'ni beradi.
 function json(res, data, code = 200) {
-  res.writeHead(code, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+  res.writeHead(code, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(data));
 }
-function getAuth(req) {
+// Tokenni tekshiradi VA bazadagi pass_version bilan solishtiradi — parol
+// o'zgargan bo'lsa (pass_version oshgan bo'lsa) eski token rad etiladi,
+// ya'ni parol tiklanganda barcha eski sessiyalar avtomatik bekor bo'ladi.
+async function getAuth(req) {
   const h = req.headers.authorization || '';
   const tok = h.startsWith('Bearer ') ? h.slice(7) : null;
-  return tok ? verifyToken(tok) : null;
+  if (!tok) return null;
+  const decoded = verifyToken(tok);
+  if (!decoded) return null;
+  const row = await db.get('SELECT pass_version FROM users WHERE id=$1', [decoded.userId]);
+  if (!row) return null;
+  if ((row.pass_version || 1) !== (decoded.pv || 1)) return null;
+  return decoded.userId;
 }
 // Returns user id if authed and not banned, else sends error and returns null
 async function getAuthNotBanned(req, res) {
-  const u2 = getAuth(req);
+  const u2 = await getAuth(req);
   if (!u2) { json(res, { error: 'Unauthorized' }, 401); return null; }
   const user = await Q.uById(u2);
   if (!user) { json(res, { error: 'Topilmadi' }, 404); return null; }
@@ -46,6 +60,11 @@ async function readBody(req) {
     req.on('error', err);
   });
 }
+// Multipart body uchun umumiy qattiq chegara — eng katta ruxsat etilgan fayl
+// (video, 100MB) + maydonlar uchun zaxira. Shundan oshsa, oqim darhol yopiladi —
+// butun body hech qachon bundan ko'p RAM egallamaydi.
+const MAX_MULTIPART_BYTES = 105 * 1024 * 1024;
+
 async function parseMultipart(req) {
   return new Promise((ok, err) => {
     const ct = req.headers['content-type'] || '';
@@ -53,9 +72,22 @@ async function parseMultipart(req) {
     if (!bm) return ok({ fields: {}, files: {} });
     const boundary = Buffer.from('--' + bm[1]);
     let chunks = [];
-    req.on('data', c => chunks.push(c));
-    req.on('error', err);
+    let total = 0;
+    let tooLarge = false;
+    req.on('data', c => {
+      if (tooLarge) return;
+      total += c.length;
+      if (total > MAX_MULTIPART_BYTES) {
+        tooLarge = true;
+        req.destroy();
+        ok({ fields: {}, files: {}, tooLarge: true });
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on('error', e => { if (!tooLarge) err(e); });
     req.on('end', () => {
+      if (tooLarge) return;
       const body = Buffer.concat(chunks);
       const parts = [];
       let start = 0;
@@ -89,10 +121,53 @@ async function parseMultipart(req) {
     });
   });
 }
-function saveFile(fileObj, allowedExts) {
+const UPLOAD_SIZE_LIMITS = {
+  image: 10 * 1024 * 1024,
+  audio: 25 * 1024 * 1024,
+  video: 100 * 1024 * 1024,
+};
+
+// Kengaytmadan tashqari fayl imzosini (magic bytes) ham tekshiradi — kengaytmani
+// almashtirib boshqa turdagi fayl (masalan .exe'ni .jpg deb) yuklashning oldini oladi.
+function checkMagicBytes(buf, ext) {
+  if (!buf || buf.length < 12) return false;
+  switch (ext) {
+    case '.jpg': case '.jpeg':
+      return buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF;
+    case '.png':
+      return buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47;
+    case '.gif':
+      return buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38;
+    case '.webp':
+      return buf.slice(0, 4).toString('ascii') === 'RIFF' && buf.slice(8, 12).toString('ascii') === 'WEBP';
+    case '.mp4': case '.mov':
+      return buf.slice(4, 8).toString('ascii') === 'ftyp';
+    case '.webm': case '.mkv':
+      return buf[0] === 0x1A && buf[1] === 0x45 && buf[2] === 0xDF && buf[3] === 0xA3;
+    case '.mp3':
+      return (buf[0] === 0xFF && (buf[1] & 0xE0) === 0xE0) || buf.slice(0, 3).toString('ascii') === 'ID3';
+    case '.wav':
+      return buf.slice(0, 4).toString('ascii') === 'RIFF' && buf.slice(8, 12).toString('ascii') === 'WAVE';
+    case '.ogg':
+      return buf.slice(0, 4).toString('ascii') === 'OggS';
+    case '.avi':
+      return buf.slice(0, 4).toString('ascii') === 'RIFF' && buf.slice(8, 11).toString('ascii') === 'AVI';
+    case '.m4a': case '.aac': case '.heic':
+      // Bu formatlar uchun oddiy/ishonchli universal signature yo'q —
+      // kengaytma + MIME turiga tayanamiz.
+      return true;
+    default:
+      return true;
+  }
+}
+
+function saveFile(fileObj, allowedExts, kind = 'image') {
   if (!fileObj || !fileObj.data || fileObj.data.length === 0) return null;
   const ext = fileObj.ext.toLowerCase();
   if (allowedExts && !allowedExts.includes(ext)) return null;
+  const maxSize = UPLOAD_SIZE_LIMITS[kind] || UPLOAD_SIZE_LIMITS.image;
+  if (fileObj.data.length > maxSize) return null;
+  if (!checkMagicBytes(fileObj.data, ext)) return null;
   const fn = uid() + ext;
   fs.writeFileSync(path.join(UPLOAD, fn), fileObj.data);
   return `/uploads/${fn}`;
@@ -166,11 +241,23 @@ async function notifyFollowers(posterId, post) {
   } catch(e) { console.error('notifyFollowers:', e.message); }
 }
 
+function tooManyRequests(res, retryAfter) {
+  res.setHeader('Retry-After', String(retryAfter));
+  return json(res, { error: `Juda ko'p urinish. ${retryAfter} soniyadan keyin qayta urinib ko'ring` }, 429);
+}
+
 async function route(req, res) {
+  const cors = corsHeaders(req);
+  for (const k in cors) res.setHeader(k, cors[k]);
+
   const parsed = url.parse(req.url, true);
   const p = parsed.pathname.replace(/\/$/, '') || '/';
   const q = parsed.query;
   const m = req.method;
+
+  // Umumiy IP-asosli rate limit: barcha /api/* uchun 300/daqiqa
+  const globalRl = checkRateLimit(req, 'global', 300, 60);
+  if (!globalRl.ok) return tooManyRequests(res, globalRl.retryAfter);
 
   /* ══ AUTH ══ */
   if (p === '/api/auth/telegram-login' && m === 'POST') {
@@ -191,7 +278,8 @@ async function route(req, res) {
       tgPendingProfiles.set(tempToken, { tgId, first_name: first_name || '', username: username || '', photo_url: photo_url || '', expires: Date.now() + 300000 });
       return json(res, { needProfile: true, tempToken });
     }
-    return json(res, { token: makeToken(user.id), user: await Q.uById(user.id) });
+    const fullUser = await Q.uById(user.id);
+    return json(res, { token: makeToken(user.id, fullUser.pass_version || 1), user: fullUser });
   }
   if (p === '/api/auth/telegram-finish' && m === 'POST') {
     const b = await readBody(req);
@@ -210,6 +298,8 @@ async function route(req, res) {
     return json(res, { token: makeToken(newId), user: await Q.uById(newId) });
   }
   if (p === '/api/auth/register' && m === 'POST') {
+    const rl = checkRateLimit(req, 'register', 5, 3600);
+    if (!rl.ok) return tooManyRequests(res, rl.retryAfter);
     const b = await readBody(req);
     const { username, name, email, password } = b;
     if (!username || !name || !email || !password) return json(res, { error: "Barcha maydonlarni to'ldiring" }, 400);
@@ -217,20 +307,28 @@ async function route(req, res) {
     if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) return json(res, { error: 'Username: 3-20 belgi, faqat harf/raqam/_' }, 400);
     if (await Q.uExists(username, email)) return json(res, { error: 'Bu username yoki email band' }, 409);
     const id = uid();
-    await Q.uInsert(id, username.toLowerCase(), name, email.toLowerCase(), hmac(password), '#' + Math.floor(Math.random()*0xFFFFFF).toString(16).padStart(6,'0'));
-    return json(res, { token: makeToken(id), user: await Q.uById(id) }, 201);
+    await Q.uInsert(id, username.toLowerCase(), name, email.toLowerCase(), hashPassword(password), '#' + Math.floor(Math.random()*0xFFFFFF).toString(16).padStart(6,'0'));
+    const newUser = await Q.uById(id);
+    return json(res, { token: makeToken(id, newUser.pass_version || 1), user: newUser }, 201);
   }
   if (p === '/api/auth/login' && m === 'POST') {
+    const rl = checkRateLimit(req, 'login', 10, 900);
+    if (!rl.ok) return tooManyRequests(res, rl.retryAfter);
     const b = await readBody(req);
     const { username, password } = b;
     if (!username || !password) return json(res, { error: 'Login va parolni kiriting' }, 400);
     const user = await Q.uByLogin(username);
-    if (!user || user.pass !== hmac(password)) return json(res, { error: "Noto'g'ri login yoki parol" }, 401);
+    if (!user || !verifyPassword(password, user.pass)) return json(res, { error: "Noto'g'ri login yoki parol" }, 401);
+    if (!isScryptHash(user.pass)) {
+      // Shaffof migratsiya: eski hmac formatidagi parolni scrypt'ga qayta hashlab yozib qo'yamiz
+      await Q.uUpdPass(hashPassword(password), user.id);
+    }
     if (user.is_banned) {
       if (user.ban_expires_at && Math.floor(Date.now()/1000) > user.ban_expires_at) { await Q.uUnban(user.id); }
       else { const expText = user.ban_expires_at ? ` (${new Date(user.ban_expires_at*1000).toLocaleDateString('uz-UZ')} gacha)` : ''; return json(res, { error: `Hisob bloklangan: ${user.ban_reason || ''}${expText}` }, 403); }
     }
-    return json(res, { token: makeToken(user.id), user: await Q.uById(user.id) });
+    const freshUser = await Q.uById(user.id);
+    return json(res, { token: makeToken(user.id, freshUser.pass_version || 1), user: freshUser });
   }
   if (p === '/api/auth/forgot' && m === 'POST') {
     const b = await readBody(req);
@@ -259,13 +357,15 @@ async function route(req, res) {
     if (b.new_pass.length < 6) return json(res, { error: 'Parol kamida 6 belgi' }, 400);
     const rt = await Q.rtGet(b.token);
     if (!rt) return json(res, { error: "Havola eskirgan yoki noto'g'ri" }, 400);
-    await Q.uUpdPass(hmac(b.new_pass), rt.user_id);
+    await Q.uUpdPass(hashPassword(b.new_pass), rt.user_id);
     await Q.rtUse(b.token);
     return json(res, { ok: true });
   }
 
   /* ══ EMAIL CODE RESET ══ */
   if (p === '/api/auth/send-code' && m === 'POST') {
+    const rl = checkRateLimit(req, 'send-code', 3, 3600);
+    if (!rl.ok) return tooManyRequests(res, rl.retryAfter);
     try {
       const b = await readBody(req);
       const uname = (b.username || '').trim().toLowerCase();
@@ -323,21 +423,21 @@ async function route(req, res) {
 
   /* ══ ME ══ */
   if (p === '/api/me' && m === 'GET') {
-    const u2 = getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
+    const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     const user = await Q.uById(u2); if (!user) return json(res, { error: 'Topilmadi' }, 404);
     const followers = (await Q.fwFollowers(u2)).c;
     const following = (await Q.fwFollowing(u2)).c;
     return json(res, { ...user, followers, following });
   }
   if (p === '/api/me' && m === 'PUT') {
-    const u2 = getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
+    const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     const b = await readBody(req);
     await Q.uUpdProf((b.name || '').trim(), (b.bio || '').trim(), u2);
     if (b.email) await db.run('UPDATE users SET email=$1 WHERE id=$2', [b.email.trim().toLowerCase(), u2]);
     return json(res, await Q.uById(u2));
   }
   if (p === '/api/me/phone' && m === 'PUT') {
-    const u2 = getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
+    const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     const b = await readBody(req);
     const phone = (b.phone || '').trim();
     if (!phone || !/^\+?\d{10,15}$/.test(phone)) return json(res, { error: 'Raqam formati: +998901234567' }, 400);
@@ -345,7 +445,7 @@ async function route(req, res) {
     return json(res, { ok: true, phone });
   }
   if (p === '/api/me/avatar' && m === 'POST') {
-    const u2 = getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
+    const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     const { files } = await parseMultipart(req);
     const img = saveFile(files.image, ['.jpg','.jpeg','.png','.gif','.webp']);
     if (!img) return json(res, { error: 'Rasm yuklanmadi' }, 400);
@@ -353,7 +453,7 @@ async function route(req, res) {
     return json(res, { avatar: img });
   }
   if (p === '/api/me/banner' && m === 'POST') {
-    const u2 = getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
+    const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     const { files } = await parseMultipart(req);
     const img = saveFile(files.image, ['.jpg','.jpeg','.png','.gif','.webp']);
     if (!img) return json(res, { error: 'Rasm yuklanmadi' }, 400);
@@ -361,22 +461,22 @@ async function route(req, res) {
     return json(res, { banner: img });
   }
   if (p === '/api/me/password' && m === 'PUT') {
-    const u2 = getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
+    const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     const b = await readBody(req);
     const user = await Q.uByIdFull(u2);
-    if (!user || user.pass !== hmac(b.old_pass || '')) return json(res, { error: "Eski parol noto'g'ri" }, 400);
+    if (!user || !verifyPassword(b.old_pass || '', user.pass)) return json(res, { error: "Eski parol noto'g'ri" }, 400);
     if (!b.new_pass || b.new_pass.length < 6) return json(res, { error: 'Yangi parol kamida 6 belgi' }, 400);
-    await Q.uUpdPass(hmac(b.new_pass), u2);
+    await Q.uUpdPass(hashPassword(b.new_pass), u2);
     return json(res, { ok: true });
   }
   if (p === '/api/me/push-token' && m === 'POST') {
-    const u2 = getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
+    const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     const b = await readBody(req);
     if (b.token) await Q.pushIns(u2, b.token);
     return json(res, { ok: true });
   }
   if (p === '/api/me/push-token' && m === 'DELETE') {
-    const u2 = getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
+    const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     const b = await readBody(req);
     if (b.token) await Q.pushDel(u2, b.token);
     return json(res, { ok: true });
@@ -384,7 +484,7 @@ async function route(req, res) {
 
   /* ══ USERS ══ */
   if (p.match(/^\/api\/users\/[^/]+$/) && m === 'GET') {
-    const u2 = getAuth(req);
+    const u2 = await getAuth(req);
     const param = p.split('/')[3];
     const user  = await Q.uBySlug(param);
     if (!user) return json(res, { error: 'Topilmadi' }, 404);
@@ -432,7 +532,7 @@ async function route(req, res) {
 
   /* ══ COMMUNITIES ══ */
   if (p === '/api/communities' && m === 'GET') {
-    const u2 = getAuth(req);
+    const u2 = await getAuth(req);
     const sq = q.q ? q.q.toLowerCase() : null;
     const coms = sq ? await Q.comSearch('%'+sq+'%','%'+sq+'%') : await Q.comAll();
     const out = [];
@@ -451,7 +551,7 @@ async function route(req, res) {
     return json(res, out);
   }
   if (p.match(/^\/api\/communities\/[^/]+$/) && m === 'GET') {
-    const u2 = getAuth(req);
+    const u2 = await getAuth(req);
     const slug = p.split('/')[3];
     const com  = await Q.comBySlug(slug);
     if (!com) return json(res, { error: 'Topilmadi' }, 404);
@@ -488,7 +588,7 @@ async function route(req, res) {
     return json(res, await Q.comById(cid), 201);
   }
   if (p.match(/^\/api\/communities\/[^/]+$/) && m === 'DELETE') {
-    const u2 = getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
+    const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     const slug = p.split('/')[3];
     const com  = await Q.comBySlug(slug);
     if (!com) return json(res, { error: 'Topilmadi' }, 404);
@@ -501,7 +601,7 @@ async function route(req, res) {
   }
 
   if (p.match(/^\/api\/communities\/[^/]+$/) && m === 'PUT') {
-    const u2 = getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
+    const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     const slug = p.split('/')[3];
     const com = await Q.comBySlug(slug);
     if (!com) return json(res, { error: 'Topilmadi' }, 404);
@@ -602,7 +702,7 @@ async function route(req, res) {
   }
   /* Popular teams by views */
   if (p === '/api/communities/popular' && m === 'GET') {
-    const u2 = getAuth(req);
+    const u2 = await getAuth(req);
     const coms = await Q.comByViews();
     const out = [];
     for (const c of coms) {
@@ -619,14 +719,14 @@ async function route(req, res) {
   }
   /* My requests */
   if (p === '/api/communities/my-requests' && m === 'GET') {
-    const u2 = getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
+    const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     const reqs = await Q.comReqAll(u2);
     return json(res, reqs);
   }
 
   /* ══ POSTS ══ */
   if (p === '/api/posts' && m === 'GET') {
-    const u2   = getAuth(req);
+    const u2   = await getAuth(req);
     const sort = q.sort || 'hot';
     const off  = parseInt(q.offset) || 0;
     let rows;
@@ -647,14 +747,14 @@ async function route(req, res) {
     return json(res, out);
   }
   if (p === '/api/posts/saved' && m === 'GET') {
-    const u2 = getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
+    const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     const rows = await Q.pSaved(u2);
     const out = [];
     for (const r of rows) out.push(await fmtPost(r, u2));
     return json(res, out);
   }
   if (p.match(/^\/api\/posts\/[^/]+$/) && m === 'GET') {
-    const u2   = getAuth(req);
+    const u2   = await getAuth(req);
     const post = await Q.pOne(p.split('/')[3]);
     if (!post) return json(res, { error: 'Topilmadi' }, 404);
     const cm = await Q.cmByPost(post.id);
@@ -664,6 +764,8 @@ async function route(req, res) {
   }
   if (p === '/api/posts' && m === 'POST') {
     const u2 = await getAuthNotBanned(req, res); if (!u2) return true;
+    const rl = checkRateLimitByUser(u2, 'posts', 10, 3600);
+    if (!rl.ok) return tooManyRequests(res, rl.retryAfter);
     const ct = req.headers['content-type'] || '';
     let title='', body='', comSlug='', type='text', link=null, image=null, video=null, audio=null, flair=null;
     let pollQuestion=null, pollOptions=null, pollDays=3;
@@ -679,14 +781,13 @@ async function route(req, res) {
       pollQuestion = fields.poll_question || null;
       pollOptions  = fields.poll_options  ? JSON.parse(fields.poll_options) : null;
       pollDays     = parseInt(fields.poll_days) || 3;
-      if (files.image) { image = saveFile(files.image,['.jpg','.jpeg','.png','.gif','.webp','.heic']); type='image'; }
+      if (files.image) { image = saveFile(files.image,['.jpg','.jpeg','.png','.gif','.webp','.heic'],'image'); type='image'; }
       if (files.video) {
-        const vfile = files.video;
-        // Check size limit: 500MB
-        if (vfile.data.length > 500*1024*1024) return json(res, { error: "Video 500MB dan oshmasin" }, 400);
-        video = saveFile(files.video,['.mp4','.webm','.mov','.avi','.mkv']); type='video';
+        video = saveFile(files.video,['.mp4','.webm','.mov','.avi','.mkv'],'video');
+        if (!video) return json(res, { error: "Video: 100MB gacha, qo'llab-quvvatlanadigan format kerak" }, 400);
+        type='video';
       }
-      if (files.audio) { audio = saveFile(files.audio,['.mp3','.wav','.ogg','.m4a','.aac','.webm']); type='audio'; }
+      if (files.audio) { audio = saveFile(files.audio,['.mp3','.wav','.ogg','.m4a','.aac','.webm'],'audio'); type='audio'; }
     } else {
       const b  = await readBody(req);
       title    = (b.title    || '').trim();
@@ -724,7 +825,7 @@ async function route(req, res) {
     return json(res, post, 201);
   }
   if (p.match(/^\/api\/posts\/[^/]+$/) && m === 'DELETE') {
-    const u2 = getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
+    const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     const pid = p.split('/')[3];
     const own = await Q.pOwner(pid); if (!own) return json(res, { error: 'Topilmadi' }, 404);
     const user = await Q.uById(u2);
@@ -785,7 +886,7 @@ async function route(req, res) {
 
   /* ══ COMMUNITY POSTS ══ */
   if (p.match(/^\/api\/communities\/[^/]+\/posts$/) && m === 'GET') {
-    const u2   = getAuth(req);
+    const u2   = await getAuth(req);
     const slug = p.split('/')[3];
     const sort = q.sort || 'hot';
     const off  = parseInt(q.offset) || 0;
@@ -803,6 +904,8 @@ async function route(req, res) {
   /* ══ COMMENTS ══ */
   if (p.match(/^\/api\/posts\/[^/]+\/comments$/) && m === 'POST') {
     const u2 = await getAuthNotBanned(req, res); if (!u2) return true;
+    const rl = checkRateLimitByUser(u2, 'comments', 30, 3600);
+    if (!rl.ok) return tooManyRequests(res, rl.retryAfter);
     const pid = p.split('/')[3];
     const post = await Q.pOne(pid); if (!post) return json(res, { error: 'Topilmadi' }, 404);
     const b = await readBody(req);
@@ -851,7 +954,7 @@ async function route(req, res) {
     return json(res, { score, my_vote: myVote });
   }
   if (p.match(/^\/api\/comments\/[^/]+$/) && m === 'DELETE') {
-    const u2 = getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
+    const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     const cid = p.split('/')[3];
     const own = await Q.cmOwner(cid); if (!own) return json(res, { error: 'Topilmadi' }, 404);
     const user = await Q.uById(u2);
@@ -870,9 +973,8 @@ async function route(req, res) {
     if (!toId) return json(res, { error: "Qabul qiluvchi ko'rsatilmagan" }, 400);
     const vf = files.voice || files.audio;
     if (!vf || !vf.data || vf.data.length === 0) return json(res, { error: 'Audio topilmadi' }, 400);
-    const fn = uid() + '.webm';
-    fs.writeFileSync(path.join(UPLOAD, fn), vf.data);
-    const audioUrl = `/uploads/${fn}`;
+    const audioUrl = saveFile({ data: vf.data, ext: '.webm' }, ['.webm'], 'audio');
+    if (!audioUrl) return json(res, { error: 'Yaroqsiz audio fayli' }, 400);
     const duration = fields.duration || '0:00';
     const mid = uid();
     await Q.msgInsert(mid, u2, toId, '[Ovozli xabar]', 'voice', null, audioUrl, duration);
@@ -908,7 +1010,7 @@ async function route(req, res) {
 
   /* ══ WEBRTC SIGNALING (REST fallback) ══ */
   if (p === '/api/call/offer' && m === 'POST') {
-    const u2 = getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
+    const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     const b = await readBody(req);
     const from = await Q.uById(u2);
     ws.sendTo(b.to_id, { type: 'call_offer', data: {
@@ -919,25 +1021,25 @@ async function route(req, res) {
     return json(res, { ok: true });
   }
   if (p === '/api/call/answer' && m === 'POST') {
-    const u2 = getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
+    const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     const b = await readBody(req);
     ws.sendTo(b.to_id, { type: 'call_answer', data: { answer: b.answer, from_id: u2 } });
     return json(res, { ok: true });
   }
   if (p === '/api/call/ice' && m === 'POST') {
-    const u2 = getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
+    const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     const b = await readBody(req);
     ws.sendTo(b.to_id, { type: 'ice_candidate', data: { candidate: b.candidate, from_id: u2 } });
     return json(res, { ok: true });
   }
   if (p === '/api/call/end' && m === 'POST') {
-    const u2 = getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
+    const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     const b = await readBody(req);
     ws.sendTo(b.to_id, { type: 'call_ended', data: { from_id: u2 } });
     return json(res, { ok: true });
   }
   if (p === '/api/call/reject' && m === 'POST') {
-    const u2 = getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
+    const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     const b = await readBody(req);
     ws.sendTo(b.to_id, { type: 'call_rejected', data: { from_id: u2 } });
     return json(res, { ok: true });
@@ -945,7 +1047,7 @@ async function route(req, res) {
 
   /* ══ MESSAGES ══ */
   if (p === '/api/messages' && m === 'GET') {
-    const u2 = getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
+    const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     const rows = await Q.msgConvos(u2);
     const convos = [];
     for (const { oid } of rows) {
@@ -958,7 +1060,7 @@ async function route(req, res) {
     return json(res, convos);
   }
   if (p.match(/^\/api\/messages\/[^/]+$/) && m === 'GET') {
-    const u2 = getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
+    const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     const toId = p.split('/')[3];
     await Q.msgMarkRead(toId, u2);
     const msgs = await Q.msgThread(u2, toId, toId, u2);
@@ -966,6 +1068,8 @@ async function route(req, res) {
   }
   if (p === '/api/messages' && m === 'POST') {
     const u2 = await getAuthNotBanned(req, res); if (!u2) return true;
+    const rl = checkRateLimitByUser(u2, 'messages', 60, 3600);
+    if (!rl.ok) return tooManyRequests(res, rl.retryAfter);
     const b  = await readBody(req);
     const toId = b.to_id || b.to;
     if (!toId || !b.body?.trim()) return json(res, { error: "Xabar bo'sh" }, 400);
@@ -981,16 +1085,16 @@ async function route(req, res) {
 
   /* ══ NOTIFICATIONS ══ */
   if (p === '/api/notifications' && m === 'GET') {
-    const u2 = getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
+    const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     return json(res, (await Q.nAll(u2)).map(fmtNotif));
   }
   if (p === '/api/notifications/read' && m === 'POST') {
-    const u2 = getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
+    const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     await Q.nMarkRead(u2);
     return json(res, { ok: true });
   }
   if (p === '/api/notifications/count' && m === 'GET') {
-    const u2 = getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
+    const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     return json(res, { count: (await Q.nUnread(u2)).c });
   }
 
@@ -998,7 +1102,7 @@ async function route(req, res) {
   if (p === '/api/search' && m === 'GET') {
     const sq = (q.q || '').toLowerCase();
     if (!sq || sq.length < 2) return json(res, { posts: [], users: [], communities: [] });
-    const u2 = getAuth(req);
+    const u2 = await getAuth(req);
     const type = q.type || 'all';
     let posts = [], users = [], coms = [];
     if (type==='all'||type==='posts') {
@@ -1021,7 +1125,7 @@ async function route(req, res) {
 
   /* ══ ADMIN ══ */
   if (p === '/api/admin/stats' && m === 'GET') {
-    const u2 = getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
+    const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     const user = await Q.uById(u2); if (!user?.is_admin) return json(res, { error: "Ruxsat yo'q" }, 403);
     const stats = await Q.adminStats();
     const reports = (await Q.rpAll()).map(r => ({ ...r, ago: ago(r.created_at) }));
@@ -1029,7 +1133,7 @@ async function route(req, res) {
     return json(res, { ...stats, user_count: stats.users, reports, users });
   }
   if (p === '/api/admin/action' && m === 'POST') {
-    const u2 = getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
+    const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     const user = await Q.uById(u2); if (!user?.is_admin) return json(res, { error: "Ruxsat yo'q" }, 403);
     const b    = await readBody(req);
     if (b.action === 'ban') {
@@ -1043,7 +1147,7 @@ async function route(req, res) {
     return json(res, { ok: true });
   }
   if (p.match(/^\/api\/admin\/reports\/[^/]+$/) && m === 'POST') {
-    const u2 = getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
+    const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     const user = await Q.uById(u2); if (!user?.is_admin) return json(res, { error: "Ruxsat yo'q" }, 403);
     const rid  = p.split('/')[4];
     const b    = await readBody(req);
@@ -1096,7 +1200,7 @@ async function route(req, res) {
     if (!codeRow) return json(res, { error: "Noto'g'ri kod yoki muddati tugagan" }, 400);
     if (newPass) {
       if (newPass.length < 6) return json(res, { error: 'Parol kamida 6 belgi' }, 400);
-      await Q.uUpdPass(hmac(newPass), user.id);
+      await Q.uUpdPass(hashPassword(newPass), user.id);
       await Q.tgCodeUse(codeRow.id);
       return json(res, { ok: true, message: 'Parol yangilandi!' });
     }

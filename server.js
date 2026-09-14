@@ -6,10 +6,11 @@ const fs   = require('fs');
 const path = require('path');
 const url  = require('url');
 
-const { init }        = require('./src/db');
-const { route }       = require('./src/routes');
-const ws              = require('./src/ws');
-const { verifyToken } = require('./src/helpers');
+const { init }          = require('./src/db');
+const { route }         = require('./src/routes');
+const ws                = require('./src/ws');
+const { verifyToken }   = require('./src/helpers');
+const { corsHeaders, SECURITY_HEADERS } = require('./src/cors');
 
 const DATA_DIR = process.env.DATA_DIR || __dirname;
 const PORT     = process.env.PORT || 3000;
@@ -39,7 +40,7 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
-      'Access-Control-Allow-Origin':  '*',
+      ...corsHeaders(req),
       'Access-Control-Allow-Headers': 'Authorization,Content-Type',
       'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
     });
@@ -63,6 +64,7 @@ const server = http.createServer(async (req, res) => {
         const chunkSize = end - start + 1;
         const fileStream = fs.createReadStream(f, { start, end });
         res.writeHead(206, {
+          ...SECURITY_HEADERS,
           'Content-Range':  `bytes ${start}-${end}/${total}`,
           'Accept-Ranges':  'bytes',
           'Content-Length': chunkSize,
@@ -72,6 +74,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       res.writeHead(200, {
+        ...SECURITY_HEADERS,
         'Content-Type':   mime,
         'Content-Length': total,
         'Accept-Ranges':  'bytes',
@@ -103,7 +106,7 @@ const server = http.createServer(async (req, res) => {
   if (!fs.existsSync(fp)) fp = path.join(PUB, 'index.html');
   if (fs.existsSync(fp)) {
     const ext = path.extname(fp).toLowerCase();
-    const headers = { 'Content-Type': MIME[ext] || 'text/plain' };
+    const headers = { ...SECURITY_HEADERS, 'Content-Type': MIME[ext] || 'text/plain' };
     // JS/CSS: never cache, so new deploys reach users immediately
     if (ext === '.js' || ext === '.css') headers['Cache-Control'] = 'no-cache, no-store, must-revalidate';
     res.writeHead(200, headers);
@@ -116,7 +119,8 @@ server.on('upgrade', (req, socket) => {
   try {
     ws.handshake(req, socket);
     const m   = (req.url || '').match(/[?&]token=([^&]+)/);
-    const uid = m ? verifyToken(decodeURIComponent(m[1])) : null;
+    const decoded = m ? verifyToken(decodeURIComponent(m[1])) : null;
+    const uid = decoded ? decoded.userId : null;
     const key = uid || `anon_${Date.now()}`;
     ws.add(key, socket);
     let buf = Buffer.alloc(0);

@@ -6,8 +6,49 @@ function uid() { return crypto.randomUUID(); }
 function now() { return Math.floor(Date.now() / 1000); }
 function hashPass(p) { return crypto.createHmac('sha256', SECRET).update(p).digest('hex'); }
 
-function makeToken(userId) {
-  const pl = Buffer.from(JSON.stringify({ userId, exp: Date.now() + 14 * 864e5 })).toString('base64url');
+/* ── Parol hashlash (scrypt) ──
+   Format: scrypt$N$r$p$salt(hex)$hash(hex)
+   Eski hmac formatidagi parollar bilan orqaga moslik saqlanadi:
+   agar saqlangan qiymat "scrypt$" bilan boshlanmasa, eski hmac() usulida tekshiriladi. */
+const SCRYPT_N = 16384, SCRYPT_R = 8, SCRYPT_P = 1, SCRYPT_KEYLEN = 64;
+
+function hashPassword(plain) {
+  const salt = crypto.randomBytes(16);
+  const hash = crypto.scryptSync(plain, salt, SCRYPT_KEYLEN, { N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P });
+  return `scrypt$${SCRYPT_N}$${SCRYPT_R}$${SCRYPT_P}$${salt.toString('hex')}$${hash.toString('hex')}`;
+}
+
+function isScryptHash(stored) {
+  return typeof stored === 'string' && stored.startsWith('scrypt$');
+}
+
+function verifyPassword(plain, stored) {
+  if (!stored) return false;
+  if (!isScryptHash(stored)) {
+    // Eski format — hmac-sha256(SECRET, parol)
+    return stored === hashPass(plain);
+  }
+  const parts = stored.split('$');
+  if (parts.length !== 6) return false;
+  const [, Ns, rs, ps, saltHex, hashHex] = parts;
+  try {
+    const N = Number(Ns), r = Number(rs), p = Number(ps);
+    const salt = Buffer.from(saltHex, 'hex');
+    const expected = Buffer.from(hashHex, 'hex');
+    const actual = crypto.scryptSync(plain, salt, expected.length, { N, r, p });
+    if (actual.length !== expected.length) return false;
+    return crypto.timingSafeEqual(actual, expected);
+  } catch {
+    return false;
+  }
+}
+
+// pv (pass_version) tokenga qo'shiladi — parol o'zgarganda bazadagi pass_version
+// oshadi va eski tokenlar (boshqa pv bilan) haqiqiy tekshiruvda (routes.js#getAuth,
+// bazaga murojaat qilib) rad etiladi. Bu yerdagi verifyToken faqat imzoni va muddatni
+// tekshiradi (bazasiz, tez) — {userId, pv} qaytaradi.
+function makeToken(userId, pv = 1) {
+  const pl = Buffer.from(JSON.stringify({ userId, pv, exp: Date.now() + 14 * 864e5 })).toString('base64url');
   const sg = crypto.createHmac('sha256', SECRET).update(pl).digest('base64url');
   return `${pl}.${sg}`;
 }
@@ -19,15 +60,17 @@ function verifyToken(tok) {
     if (!pl || !sg) return null;
     if (crypto.createHmac('sha256', SECRET).update(pl).digest('base64url') !== sg) return null;
     const d = JSON.parse(Buffer.from(pl, 'base64url').toString());
-    return Date.now() > d.exp ? null : d.userId;
-  } catch { 
-    return null; 
+    if (Date.now() > d.exp) return null;
+    return { userId: d.userId, pv: d.pv || 1 };
+  } catch {
+    return null;
   }
 }
 
 function getAuth(req) {
   const h = req.headers['authorization'] || '';
-  return verifyToken(h.startsWith('Bearer ') ? h.slice(7).trim() : '');
+  const decoded = verifyToken(h.startsWith('Bearer ') ? h.slice(7).trim() : '');
+  return decoded ? decoded.userId : null;
 }
 
 function timeAgo(ts) {
@@ -102,12 +145,12 @@ function json(res, data, status = 200) {
     data = {};
   }
   
+  // Eslatma: bu yordamchi funksiya CORS headerlarini o'rnatmaydi — chaqiruvchi
+  // route(req,res) darajasida src/cors.js#corsHeaders(req) orqali qo'yilishi kerak
+  // (bu yerda req yo'q, shuning uchun ruxsat etilgan originni bilib bo'lmaydi).
   const body = JSON.stringify(data);
   const headers = {
     'Content-Type': 'application/json; charset=utf-8',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Content-Length': Buffer.byteLength(body, 'utf-8')
   };
   
@@ -121,16 +164,19 @@ function randColor() {
   return COLORS[Math.floor(Math.random() * COLORS.length)]; 
 }
 
-module.exports = { 
-  uid, 
-  now, 
-  hashPass, 
-  makeToken, 
-  verifyToken, 
-  getAuth, 
-  timeAgo, 
-  readBody, 
-  parseMultipart, 
-  json, 
-  randColor 
+module.exports = {
+  uid,
+  now,
+  hashPass,
+  hashPassword,
+  verifyPassword,
+  isScryptHash,
+  makeToken,
+  verifyToken,
+  getAuth,
+  timeAgo,
+  readBody,
+  parseMultipart,
+  json,
+  randColor
 };

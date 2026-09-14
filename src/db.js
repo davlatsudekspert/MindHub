@@ -205,6 +205,7 @@ const SCHEMA = `
   ALTER TABLE users ADD COLUMN IF NOT EXISTS tg_chat_id TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS tg_id TEXT;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS ban_expires_at INTEGER;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS pass_version INTEGER DEFAULT 1;
 
   CREATE TABLE IF NOT EXISTS community_roles (
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -235,7 +236,7 @@ const SCHEMA = `
 
 const Q = {
   /* users */
-  uById:      (id) => db.get('SELECT id,username,name,email,color,bio,avatar,banner,karma,followers,is_admin,is_banned,ban_reason,ban_expires_at,created_at,phone FROM users WHERE id=$1', [id]),
+  uById:      (id) => db.get('SELECT id,username,name,email,color,bio,avatar,banner,karma,followers,is_admin,is_banned,ban_reason,ban_expires_at,created_at,phone,pass_version FROM users WHERE id=$1', [id]),
   uByIdFull:  (id) => db.get('SELECT * FROM users WHERE id=$1', [id]),
   uByLogin:   (u) => db.get('SELECT * FROM users WHERE lower(username)=lower($1) OR lower(email)=lower($1)', [u]),
   uBySlug:    (param) => db.get('SELECT id,username,name,color,bio,avatar,banner,karma,followers,is_admin,is_banned,created_at FROM users WHERE lower(username)=lower($1) OR id=$1', [param]),
@@ -246,7 +247,7 @@ const Q = {
   uInsert:    (id, username, name, email, pass, color) => db.run('INSERT INTO users(id,username,name,email,pass,color) VALUES($1,$2,$3,$4,$5,$6)', [id, username, name, email, pass, color]),
   uExists:    (username, email) => db.get('SELECT id FROM users WHERE lower(username)=lower($1) OR lower(email)=lower($2)', [username, email]),
   uUpdProf:   (name, bio, id) => db.run('UPDATE users SET name=$1,bio=$2 WHERE id=$3', [name, bio, id]),
-  uUpdPass:   (pass, id) => db.run('UPDATE users SET pass=$1 WHERE id=$2', [pass, id]),
+  uUpdPass:   (pass, id) => db.run('UPDATE users SET pass=$1,pass_version=pass_version+1 WHERE id=$2', [pass, id]),
   uSetPhone:  (phone, id) => db.run('UPDATE users SET phone=$1 WHERE id=$2', [phone, id]),
   uSetTgChat: (chat_id, id) => db.run('UPDATE users SET tg_chat_id=$1 WHERE id=$2', [chat_id, id]),
   uSetTgId:   (tg_id, id) => db.run('UPDATE users SET tg_id=$1 WHERE id=$2', [tg_id, id]),
@@ -386,7 +387,12 @@ const Q = {
   comRoleDel:    (user_id, community_id) => db.run('DELETE FROM community_roles WHERE user_id=$1 AND community_id=$2', [user_id, community_id]),
   comRoleList:   (community_id) => db.all('SELECT cr.user_id,cr.role,u.username,u.name,u.avatar,u.color FROM community_roles cr JOIN users u ON cr.user_id=u.id WHERE cr.community_id=$1', [community_id]),
   comIsAdmin:    (user_id, community_id) => db.get('SELECT 1 FROM community_roles WHERE user_id=$1 AND community_id=$2 AND role=$3', [user_id, community_id, 'admin']),
-  comCanManage:  (user_id, community_id) => db.get('SELECT 1 FROM communities WHERE id=$1 AND owner_id=$2', [user_id, community_id]) || db.get('SELECT 1 FROM community_roles WHERE user_id=$1 AND community_id=$2 AND role=$3', [user_id, community_id, 'admin']),
+  comCanManage:  async (user_id, community_id) => {
+    const owns = await db.get('SELECT 1 FROM communities WHERE id=$1 AND owner_id=$2', [community_id, user_id]);
+    if (owns) return true;
+    const admin = await db.get('SELECT 1 FROM community_roles WHERE user_id=$1 AND community_id=$2 AND role=$3', [user_id, community_id, 'admin']);
+    return !!admin;
+  },
 
   /* community views */
   comIncViews:   (id) => db.run('UPDATE communities SET views=views+1 WHERE id=$1', [id]),
