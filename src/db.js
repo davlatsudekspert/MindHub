@@ -284,10 +284,49 @@ const Q = {
   // "Hot" saralash — Reddit formulasi: sign(score)*log10(max(|score|,1)) + yosh/45000.
   // Oddiy "score DESC" eski postlarni abadiy tepada saqlab qo'yardi; bu formula
   // vaqt o'tishi bilan pasayish (time decay) qo'shadi.
-  pHot:    (off) => db.all(`SELECT p.*,u.username,u.color,u.avatar,c.slug as cslug,c.name as cname,c.color as ccolor FROM posts p JOIN users u ON p.user_id=u.id JOIN communities c ON p.community_id=c.id ORDER BY (sign(p.score)*log(greatest(abs(p.score),1)) + p.created_at/45000.0) DESC, p.created_at DESC LIMIT 25 OFFSET $1`, [off]),
-  pNew:    (off) => db.all('SELECT p.*,u.username,u.color,u.avatar,c.slug as cslug,c.name as cname,c.color as ccolor FROM posts p JOIN users u ON p.user_id=u.id JOIN communities c ON p.community_id=c.id ORDER BY p.created_at DESC LIMIT 25 OFFSET $1', [off]),
-  pCom:    (slug, off) => db.all(`SELECT p.*,u.username,u.color,u.avatar,c.slug as cslug,c.name as cname,c.color as ccolor FROM posts p JOIN users u ON p.user_id=u.id JOIN communities c ON p.community_id=c.id WHERE lower(c.slug)=lower($1) ORDER BY (sign(p.score)*log(greatest(abs(p.score),1)) + p.created_at/45000.0) DESC, p.created_at DESC LIMIT 25 OFFSET $2`, [slug, off]),
-  pComNew: (slug, off) => db.all('SELECT p.*,u.username,u.color,u.avatar,c.slug as cslug,c.name as cname,c.color as ccolor FROM posts p JOIN users u ON p.user_id=u.id JOIN communities c ON p.community_id=c.id WHERE lower(c.slug)=lower($1) ORDER BY p.created_at DESC LIMIT 25 OFFSET $2', [slug, off]),
+  //
+  // Cursor-asosli pagination (OFFSET o'rniga): OFFSET postlar ko'payishi bilan
+  // sekinlashadi (bazaga har safar N ta qatorni "sanab o'tish" kerak) va yangi
+  // post qo'shilsa sahifalar orasida dublikat/o'tkazib yuborish xatoliklariga
+  // olib keladi. cursor = oxirgi ko'rilgan postning tartiblash qiymati(lari) —
+  // keyingi sahifa shundan pastini so'raydi, hajmdan qat'iy nazar tez ishlaydi.
+  // cursor=null bo'lsa — birinchi sahifa.
+  // MUHIM: hot_rank/created_at ustida ko'p postlar bir xil qiymatga ega bo'lishi
+  // mumkin (masalan bir vaqtda yaratilgan postlar) — faqat (hot_rank, created_at)
+  // bo'yicha cursor solishtirish shu holatda teng qatorlarni "chegarada" tashlab
+  // yuborib, sahifalash o'rtasida postlarni yo'qotadi. p.id (UUID, unikal) uchinchi
+  // tiebreaker sifatida qo'shilgan — bu bilan tartiblash har doim to'liq unikal.
+  pHot: (cursor, limit) => db.all(
+    `SELECT p.*,u.username,u.color,u.avatar,c.slug as cslug,c.name as cname,c.color as ccolor,
+       (sign(p.score)*log(greatest(abs(p.score),1)) + p.created_at/45000.0) as hot_rank
+     FROM posts p JOIN users u ON p.user_id=u.id JOIN communities c ON p.community_id=c.id
+     WHERE $1::double precision IS NULL OR (sign(p.score)*log(greatest(abs(p.score),1)) + p.created_at/45000.0, p.created_at, p.id) < ($1::double precision, $2::int, $3::text)
+     ORDER BY hot_rank DESC, p.created_at DESC, p.id DESC LIMIT $4`,
+    [cursor?.hs ?? null, cursor?.ct ?? null, cursor?.id ?? null, limit]
+  ),
+  pNew: (cursor, limit) => db.all(
+    `SELECT p.*,u.username,u.color,u.avatar,c.slug as cslug,c.name as cname,c.color as ccolor
+     FROM posts p JOIN users u ON p.user_id=u.id JOIN communities c ON p.community_id=c.id
+     WHERE $1::int IS NULL OR (p.created_at, p.id) < ($1::int, $2::text)
+     ORDER BY p.created_at DESC, p.id DESC LIMIT $3`,
+    [cursor?.ct ?? null, cursor?.id ?? null, limit]
+  ),
+  pCom: (slug, cursor, limit) => db.all(
+    `SELECT p.*,u.username,u.color,u.avatar,c.slug as cslug,c.name as cname,c.color as ccolor,
+       (sign(p.score)*log(greatest(abs(p.score),1)) + p.created_at/45000.0) as hot_rank
+     FROM posts p JOIN users u ON p.user_id=u.id JOIN communities c ON p.community_id=c.id
+     WHERE lower(c.slug)=lower($1)
+       AND ($2::double precision IS NULL OR (sign(p.score)*log(greatest(abs(p.score),1)) + p.created_at/45000.0, p.created_at, p.id) < ($2::double precision, $3::int, $4::text))
+     ORDER BY hot_rank DESC, p.created_at DESC, p.id DESC LIMIT $5`,
+    [slug, cursor?.hs ?? null, cursor?.ct ?? null, cursor?.id ?? null, limit]
+  ),
+  pComNew: (slug, cursor, limit) => db.all(
+    `SELECT p.*,u.username,u.color,u.avatar,c.slug as cslug,c.name as cname,c.color as ccolor
+     FROM posts p JOIN users u ON p.user_id=u.id JOIN communities c ON p.community_id=c.id
+     WHERE lower(c.slug)=lower($1) AND ($2::int IS NULL OR (p.created_at, p.id) < ($2::int, $3::text))
+     ORDER BY p.created_at DESC, p.id DESC LIMIT $4`,
+    [slug, cursor?.ct ?? null, cursor?.id ?? null, limit]
+  ),
   pByUser: (user_id) => db.all('SELECT p.*,u.username,u.color,u.avatar,c.slug as cslug,c.name as cname,c.color as ccolor FROM posts p JOIN users u ON p.user_id=u.id JOIN communities c ON p.community_id=c.id WHERE p.user_id=$1 ORDER BY p.created_at DESC LIMIT 25', [user_id]),
   pOne:    (id) => db.get('SELECT p.*,u.username,u.color,u.avatar,c.slug as cslug,c.name as cname,c.color as ccolor FROM posts p JOIN users u ON p.user_id=u.id JOIN communities c ON p.community_id=c.id WHERE p.id=$1', [id]),
   pInsert: (id, user_id, community_id, title, body, link, image, video, audio, type, flair, kind) => db.run('INSERT INTO posts(id,user_id,community_id,title,body,link,image,video,audio,type,flair,kind) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)', [id, user_id, community_id, title, body, link, image, video, audio, type, flair, kind || 'post']),

@@ -1,6 +1,6 @@
 'use strict';
-let _feedSort = 'hot', _feedOff = 0, _feedBusy = false;
-let _comSort  = 'hot', _comOff  = 0;
+let _feedSort = 'hot', _feedCursor = null, _feedDone = false, _feedBusy = false, _feedLoadedOnce = false;
+let _comSort  = 'hot', _comCursor  = null, _comDone  = false;
 let _curCom   = null;
 
 /* ═══ BUILD POST ═══ */
@@ -174,18 +174,21 @@ async function votePoll(pollId, optIdx, btn) {
 /* ═══ FEED ═══ */
 async function loadFeed(reset = true) {
   if (_feedBusy && !reset) return;
+  if (!reset && _feedDone) return;
   _feedBusy = true;
   const cnt = document.getElementById('feed-cnt'); if (!cnt) { _feedBusy = false; return; }
-  if (reset) { _feedOff = 0; cnt.innerHTML = spinner(); }
+  if (reset) { _feedCursor = null; _feedDone = false; _feedLoadedOnce = false; cnt.innerHTML = spinner(); }
   try {
-    const posts = await API.posts(_feedSort, _feedOff);
+    const d = await API.posts(_feedSort, _feedCursor);
     if (reset) cnt.innerHTML = '';
-    if (!posts.length && reset) { cnt.innerHTML = emptyEl('save', "Hali postlar yo'q", "Birinchi post siz bo'ling!"); _feedBusy = false; return; }
-    posts.forEach((p,i) => {
-      const d = document.createElement('div'); d.innerHTML = buildPost(p);
-      const c = d.firstElementChild; c.style.animationDelay = (i*.04)+'s'; cnt.appendChild(c);
+    if (!d.posts.length && reset) { cnt.innerHTML = emptyEl('save', "Hali postlar yo'q", "Birinchi post siz bo'ling!"); _feedBusy = false; return; }
+    d.posts.forEach((p,i) => {
+      const el = document.createElement('div'); el.innerHTML = buildPost(p);
+      const c = el.firstElementChild; c.style.animationDelay = (i*.04)+'s'; cnt.appendChild(c);
     });
-    _feedOff += posts.length;
+    _feedLoadedOnce = true;
+    _feedCursor = d.next_cursor;
+    if (!d.next_cursor) _feedDone = true;
   } catch(e) { if(reset) cnt.innerHTML = emptyEl('close','Xatolik',e.message); }
   _feedBusy = false;
 }
@@ -241,16 +244,18 @@ function setupMediaInDetail(container) {
 
 async function loadComFeed(slug, sort = 'hot', reset = true) {
   const cnt = document.getElementById('com-feed-cnt'); if (!cnt) return;
-  if (reset) { _comOff = 0; cnt.innerHTML = spinner(); }
+  if (!reset && _comDone) return;
+  if (reset) { _comCursor = null; _comDone = false; cnt.innerHTML = spinner(); }
   try {
-    const posts = await API.comPosts(slug, sort, _comOff);
+    const d = await API.comPosts(slug, sort, _comCursor);
     if (reset) cnt.innerHTML = '';
-    if (!posts.length && reset) { cnt.innerHTML = emptyEl('save',"Hali postlar yo'q","Bu jamoada birinchi post siz bo'ling!"); return; }
-    posts.forEach((p,i) => {
-      const d = document.createElement('div'); d.innerHTML = buildPost(p);
-      const c = d.firstElementChild; c.style.animationDelay = (i*.04)+'s'; cnt.appendChild(c);
+    if (!d.posts.length && reset) { cnt.innerHTML = emptyEl('save',"Hali postlar yo'q","Bu jamoada birinchi post siz bo'ling!"); return; }
+    d.posts.forEach((p,i) => {
+      const el = document.createElement('div'); el.innerHTML = buildPost(p);
+      const c = el.firstElementChild; c.style.animationDelay = (i*.04)+'s'; cnt.appendChild(c);
     });
-    _comOff += posts.length;
+    _comCursor = d.next_cursor;
+    if (!d.next_cursor) _comDone = true;
   } catch(e) { if(reset) cnt.innerHTML = emptyEl('close','Xatolik',e.message); }
 }
 
@@ -444,13 +449,12 @@ function initFeedWS() {
   WS.on('new_post', d => {
     if (document.querySelector('#sec-home.active')) {
       const cnt = document.getElementById('feed-cnt');
-      if (cnt && _feedOff === 0) {
+      if (cnt && !_feedLoadedOnce) {
         const el = document.createElement('div');
         el.innerHTML = buildPost(d.data);
         const c = el.firstElementChild;
         c.style.animationDelay = '0s';
         cnt.prepend(c);
-        _feedOff++;
       }
     }
   });

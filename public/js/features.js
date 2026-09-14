@@ -15,7 +15,8 @@ async function openCommunity(slug) {
   if (hd) hd.innerHTML = spinner();
   if (fd) fd.innerHTML = spinner();
   try {
-    const [com, posts] = await Promise.all([API.getCom(slug), API.comPosts(slug,'hot',0)]);
+    const [com, postsResult] = await Promise.all([API.getCom(slug), API.comPosts(slug,'hot',null)]);
+    const posts = postsResult.posts;
     const letter = (com.name||com.slug||'?')[0].toUpperCase();
     const color  = com.color || '#C8922A';
     const bannerStyle = com.banner ? `url(${esc(com.banner)}) center/cover` : `linear-gradient(135deg,${color}44,${color}22)`;
@@ -48,7 +49,8 @@ async function openCommunity(slug) {
       </div>`;
     if (fd) {
       fd.innerHTML = '';
-      _comOff = 0;
+      _comCursor = postsResult.next_cursor;
+      _comDone = !postsResult.next_cursor;
       document.querySelectorAll('#com-sort-bar .sort-btn').forEach(b=>b.classList.toggle('active',b.dataset.sort==='hot'));
       posts.forEach((p,i) => {
         const d=document.createElement('div'); d.innerHTML=buildPost(p);

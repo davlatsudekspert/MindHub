@@ -84,6 +84,28 @@ R2_PUBLIC_URL
   tugmasi (faqat post egasi/admin), ekspert taklifi bildirishnomasi maxsus
   ko'rinishda (public/js/features.js#loadNotifs).
 
+## Post feedlar: cursor-asosli pagination
+- GET /api/posts va GET /api/communities/:slug/posts OFFSET o'rniga cursor
+  ishlatadi (src/db.js#pHot/pNew/pCom/pComNew). Javob shakli
+  `{posts:[...], next_cursor: string|null}` — cursor base64url'da kodlangan
+  JSON (src/helpers.js#encodeCursor/decodeCursor), mijoz uni tushunmasdan
+  keyingi so'rovga `?cursor=` sifatida qaytaradi.
+- ⚠️ Tiebreak muammosi (sinov paytida topilgan haqiqiy bug): bir vaqtda
+  yaratilgan postlar bir xil hot_rank/created_at qiymatiga ega bo'lishi
+  mumkin. Faqat shu ikkitasi bo'yicha cursor solishtirsa, "chegaradagi"
+  teng qatorlar sahifalar orasida butunlay yo'qolib qolardi (page 2 bo'sh
+  qaytardi, garchi hali postlar qolgan bo'lsa ham). Yechim: p.id (UUID,
+  unikal) uchinchi tiebreaker sifatida qo'shildi — ORDER BY va WHERE'dagi
+  qator (row-value) solishtiruvga ham kiritilgan.
+- ⚠️ Precision muammosi: hot_rank ustuni `float8` (double precision)da
+  hisoblanadi, lekin cursor qiymati SQL'da `::real` (float4)ga cast
+  qilinganda aniqlik yo'qolib, teng bo'lishi kerak bo'lgan qiymatlar teng
+  bo'lmay qolgan — bu ham page 2'ni bo'sh qaytarishga sabab bo'lgan.
+  Yechim: `::double precision` ishlatiladi, `::real` emas.
+- Yangi cursor-pagination endpoint qo'shsang: (1) barcha ORDER BY
+  ustunlariga id kabi unikal tiebreaker qo'sh, (2) cast turlarini haqiqiy
+  hisoblangan ustun turi bilan mosla (float8 ustunni real'ga cast qilma).
+
 ## Testlar
 - `npm test` (`node --test`, node:test — tashqi kutubxona kerak emas).
   Haqiqiy PostgreSQL kerak: `DATABASE_URL=postgres://postgres:postgres@localhost:5432/mindhub_test npm test`

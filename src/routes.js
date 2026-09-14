@@ -3,7 +3,7 @@ const crypto = require('crypto');
 const path = require('path');
 const url  = require('url');
 const { Q, db } = require('./db');
-const { verifyToken, makeToken, uid, randColor, hashPassword, verifyPassword, isScryptHash } = require('./helpers');
+const { verifyToken, makeToken, uid, randColor, hashPassword, verifyPassword, isScryptHash, encodeCursor, decodeCursor } = require('./helpers');
 const ws = require('./ws');
 const { corsHeaders } = require('./cors');
 const { checkRateLimit, checkRateLimitByUser, getClientIp } = require('./ratelimit');
@@ -830,13 +830,11 @@ async function route(req, res) {
 
   /* ══ POSTS ══ */
   if (p === '/api/posts' && m === 'GET') {
-    const u2   = await getAuth(req);
-    const sort = q.sort || 'hot';
-    const off  = parseInt(q.offset) || 0;
-    let rows;
-    if (sort === 'new')  rows = await Q.pNew(off);
-    else if (sort === 'top') rows = await Q.pHot(off);
-    else rows = await Q.pHot(off);
+    const u2     = await getAuth(req);
+    const sort   = q.sort || 'hot';
+    const limit  = Math.min(parseInt(q.limit) || 25, 50);
+    const cursor = decodeCursor(q.cursor);
+    const rows = sort === 'new' ? await Q.pNew(cursor, limit) : await Q.pHot(cursor, limit);
     const out = [];
     for (const r of rows) {
       if (r.community_id) {
@@ -848,7 +846,11 @@ async function route(req, res) {
       }
       out.push(await fmtPost(r, u2));
     }
-    return json(res, out);
+    const last = rows[rows.length - 1];
+    const nextCursor = (last && rows.length >= limit)
+      ? encodeCursor(sort === 'new' ? { ct: last.created_at, id: last.id } : { hs: last.hot_rank, ct: last.created_at, id: last.id })
+      : null;
+    return json(res, { posts: out, next_cursor: nextCursor });
   }
   if (p === '/api/posts/saved' && m === 'GET') {
     const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
@@ -1001,19 +1003,24 @@ async function route(req, res) {
 
   /* ══ COMMUNITY POSTS ══ */
   if (p.match(/^\/api\/communities\/[^/]+\/posts$/) && m === 'GET') {
-    const u2   = await getAuth(req);
-    const slug = p.split('/')[3];
-    const sort = q.sort || 'hot';
-    const off  = parseInt(q.offset) || 0;
-    const com  = await Q.comBySlug(slug);
+    const u2     = await getAuth(req);
+    const slug   = p.split('/')[3];
+    const sort   = q.sort || 'hot';
+    const limit  = Math.min(parseInt(q.limit) || 25, 50);
+    const cursor = decodeCursor(q.cursor);
+    const com    = await Q.comBySlug(slug);
     if (com && com.is_private) {
       const isMember = u2 ? !!(await Q.memCheck(u2, com.id)) : false;
       if (!isMember && u2 !== com.owner_id) return json(res, { error: "Maxfiy jamoa, a'zo bo'ling" }, 403);
     }
-    const rows = sort === 'new' ? await Q.pComNew(slug, off) : await Q.pCom(slug, off);
+    const rows = sort === 'new' ? await Q.pComNew(slug, cursor, limit) : await Q.pCom(slug, cursor, limit);
     const out = [];
     for (const r of rows) out.push(await fmtPost(r, u2));
-    return json(res, out);
+    const last = rows[rows.length - 1];
+    const nextCursor = (last && rows.length >= limit)
+      ? encodeCursor(sort === 'new' ? { ct: last.created_at, id: last.id } : { hs: last.hot_rank, ct: last.created_at, id: last.id })
+      : null;
+    return json(res, { posts: out, next_cursor: nextCursor });
   }
 
   /* ══ AI KLASTERLAR (FAZA 3) ══ */

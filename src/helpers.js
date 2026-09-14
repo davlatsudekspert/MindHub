@@ -6,6 +6,23 @@ function uid() { return crypto.randomUUID(); }
 function now() { return Math.floor(Date.now() / 1000); }
 function hashPass(p) { return crypto.createHmac('sha256', SECRET).update(p).digest('hex'); }
 
+/* ── Cursor-asosli pagination uchun ── */
+// Ochiq (opaque) token sifatida ishlatiladi — mijoz ichini bilishi shart emas,
+// keyingi so'rovda o'zgarishsiz qaytarib beradi. base64url — URL query
+// parametrida xavfsiz ishlatish uchun.
+function encodeCursor(obj) {
+  if (!obj) return null;
+  return Buffer.from(JSON.stringify(obj)).toString('base64url');
+}
+function decodeCursor(str) {
+  if (!str) return null;
+  try {
+    return JSON.parse(Buffer.from(str, 'base64url').toString());
+  } catch {
+    return null;
+  }
+}
+
 /* ── Parol hashlash (scrypt) ──
    Format: scrypt$N$r$p$salt(hex)$hash(hex)
    Eski hmac formatidagi parollar bilan orqaga moslik saqlanadi:
@@ -178,5 +195,7 @@ module.exports = {
   readBody,
   parseMultipart,
   json,
-  randColor
+  randColor,
+  encodeCursor,
+  decodeCursor
 };
