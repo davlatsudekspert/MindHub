@@ -97,3 +97,18 @@ R2_PUBLIC_URL
   `pg_type_typname_nsp_index` poyga holati (race condition) yuzaga keladi.
 - CI: `.github/workflows/ci.yml` — har push/PR'da node --check + npm test
   (Postgres service container bilan).
+
+## Logging va xatoliklarni ushlash
+- src/logger.js — `log.info/warn/error(msg, meta)`. NODE_ENV=production'da
+  JSON qatorlar chiqaradi (Railway loglarida filtrlash uchun), aks holda
+  odatdagi o'qilishi qulay format. Mavjud console.log/error chaqiriqlari
+  ataylab o'zgartirilmagan — logger yangi/muhim joylar uchun.
+- server.js: process.on('uncaughtException'/'unhandledRejection') qo'shildi —
+  avval bular yo'q edi, ya'ni bitta await qilinmagan promise (masalan
+  fire-and-forget email) butun serverni yiqitishi mumkin edi (Node 15+ da
+  unhandledRejection standart holatda jarayonni to'xtatadi). Endi
+  unhandledRejection faqat logga yoziladi (jarayon davom etadi),
+  uncaughtException esa logga yozib process.exit(1) qiladi (railway.json
+  restartPolicy avtomatik qayta ishga tushiradi — bu Node hujjatlari
+  tavsiya qilgan xavfsiz naqsh, chunki uncaughtException'dan keyin
+  jarayon holati noaniq bo'lishi mumkin).

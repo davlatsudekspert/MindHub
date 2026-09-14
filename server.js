@@ -14,6 +14,24 @@ const { verifyToken }   = require('./src/helpers');
 const { corsHeaders, SECURITY_HEADERS } = require('./src/cors');
 const { startCron }     = require('./src/cron');
 const { startAiWorker } = require('./src/ai/worker');
+const { log }           = require('./src/logger');
+
+// Process darajasidagi xavfsizlik to'ri: ushlanmagan promise rad etilishi
+// (unhandled rejection) Node 15+ da butun serverni yiqitadi. Bitta await
+// qilinmagan promise (masalan fire-and-forget email/notification) hamma
+// foydalanuvchilarni uzib qo'ymasligi uchun bu yerda tutib qolinadi va faqat
+// logga yoziladi — jarayon davom etadi.
+process.on('unhandledRejection', (reason) => {
+  log.error('Ushlanmagan promise xatoligi (unhandledRejection)', { reason: reason?.stack || String(reason) });
+});
+// uncaughtException'dan keyin jarayon holati noaniq bo'lishi mumkin (Node
+// hujjatlariga ko'ra) — shuning uchun bu yerda davom etilmaydi: logga yozib,
+// aniq chiqiladi. railway.json'dagi restartPolicy (ON_FAILURE) darhol qayta
+// ishga tushiradi.
+process.on('uncaughtException', (err) => {
+  log.error('Ushlanmagan istisno (uncaughtException) — server qayta ishga tushadi', { error: err?.stack || String(err) });
+  process.exit(1);
+});
 
 const DATA_DIR = process.env.DATA_DIR || __dirname;
 const PORT     = process.env.PORT || 3000;
@@ -96,7 +114,7 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ error: 'API topilmadi' }));
       }
     } catch (err) {
-      console.error(err);
+      log.error('API so\'rovida xatolik', { method: req.method, path: pname, error: err?.stack || String(err) });
       if (!res.headersSent) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Server xatosi' }));
@@ -146,7 +164,7 @@ server.on('upgrade', (req, socket) => {
     socket.on('error', () => { try { socket.destroy(); } catch {} });
     socket.write(ws.encode({ type: 'connected', userId: uid }));
   } catch (err) {
-    console.error(err);
+    log.error('WebSocket upgrade xatoligi', { error: err?.stack || String(err) });
     try { socket.destroy(); } catch {}
   }
 });
