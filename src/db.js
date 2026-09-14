@@ -281,9 +281,12 @@ const Q = {
   memLeave:  (user_id, community_id) => db.run('DELETE FROM memberships WHERE user_id=$1 AND community_id=$2', [user_id, community_id]),
 
   /* posts */
-  pHot:    (off) => db.all('SELECT p.*,u.username,u.color,u.avatar,c.slug as cslug,c.name as cname,c.color as ccolor FROM posts p JOIN users u ON p.user_id=u.id JOIN communities c ON p.community_id=c.id ORDER BY p.score DESC,p.created_at DESC LIMIT 25 OFFSET $1', [off]),
+  // "Hot" saralash — Reddit formulasi: sign(score)*log10(max(|score|,1)) + yosh/45000.
+  // Oddiy "score DESC" eski postlarni abadiy tepada saqlab qo'yardi; bu formula
+  // vaqt o'tishi bilan pasayish (time decay) qo'shadi.
+  pHot:    (off) => db.all(`SELECT p.*,u.username,u.color,u.avatar,c.slug as cslug,c.name as cname,c.color as ccolor FROM posts p JOIN users u ON p.user_id=u.id JOIN communities c ON p.community_id=c.id ORDER BY (sign(p.score)*log(greatest(abs(p.score),1)) + p.created_at/45000.0) DESC, p.created_at DESC LIMIT 25 OFFSET $1`, [off]),
   pNew:    (off) => db.all('SELECT p.*,u.username,u.color,u.avatar,c.slug as cslug,c.name as cname,c.color as ccolor FROM posts p JOIN users u ON p.user_id=u.id JOIN communities c ON p.community_id=c.id ORDER BY p.created_at DESC LIMIT 25 OFFSET $1', [off]),
-  pCom:    (slug, off) => db.all('SELECT p.*,u.username,u.color,u.avatar,c.slug as cslug,c.name as cname,c.color as ccolor FROM posts p JOIN users u ON p.user_id=u.id JOIN communities c ON p.community_id=c.id WHERE lower(c.slug)=lower($1) ORDER BY p.score DESC,p.created_at DESC LIMIT 25 OFFSET $2', [slug, off]),
+  pCom:    (slug, off) => db.all(`SELECT p.*,u.username,u.color,u.avatar,c.slug as cslug,c.name as cname,c.color as ccolor FROM posts p JOIN users u ON p.user_id=u.id JOIN communities c ON p.community_id=c.id WHERE lower(c.slug)=lower($1) ORDER BY (sign(p.score)*log(greatest(abs(p.score),1)) + p.created_at/45000.0) DESC, p.created_at DESC LIMIT 25 OFFSET $2`, [slug, off]),
   pComNew: (slug, off) => db.all('SELECT p.*,u.username,u.color,u.avatar,c.slug as cslug,c.name as cname,c.color as ccolor FROM posts p JOIN users u ON p.user_id=u.id JOIN communities c ON p.community_id=c.id WHERE lower(c.slug)=lower($1) ORDER BY p.created_at DESC LIMIT 25 OFFSET $2', [slug, off]),
   pByUser: (user_id) => db.all('SELECT p.*,u.username,u.color,u.avatar,c.slug as cslug,c.name as cname,c.color as ccolor FROM posts p JOIN users u ON p.user_id=u.id JOIN communities c ON p.community_id=c.id WHERE p.user_id=$1 ORDER BY p.created_at DESC LIMIT 25', [user_id]),
   pOne:    (id) => db.get('SELECT p.*,u.username,u.color,u.avatar,c.slug as cslug,c.name as cname,c.color as ccolor FROM posts p JOIN users u ON p.user_id=u.id JOIN communities c ON p.community_id=c.id WHERE p.id=$1', [id]),
