@@ -7,10 +7,12 @@ const path = require('path');
 const url  = require('url');
 
 const { init }          = require('./src/db');
+const { migrate }       = require('./src/migrate');
 const { route }         = require('./src/routes');
 const ws                = require('./src/ws');
 const { verifyToken }   = require('./src/helpers');
 const { corsHeaders, SECURITY_HEADERS } = require('./src/cors');
+const { startCron }     = require('./src/cron');
 
 const DATA_DIR = process.env.DATA_DIR || __dirname;
 const PORT     = process.env.PORT || 3000;
@@ -149,12 +151,14 @@ server.on('upgrade', (req, socket) => {
 });
 
 init()
+  .then(() => migrate())
   .then(() => {
+    startCron();
     server.listen(PORT, '0.0.0.0', () => {
       console.log(`\n  MindHub  →  http://localhost:${PORT}\n`);
     });
   })
   .catch(err => {
-    console.error('❌ PostgreSQL ulanishda xatolik:', err.message);
+    console.error('❌ Server ishga tushmadi:', err.message);
     process.exit(1);
   });

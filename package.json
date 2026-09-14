@@ -7,7 +7,6 @@
     "start": "node server.js"
   },
   "dependencies": {
-    "nodemailer": "^9.0.5",
     "pg": "^8.13.1"
   },
   "engines": {

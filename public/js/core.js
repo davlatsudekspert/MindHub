@@ -77,12 +77,20 @@ async function api(method, path, body=null, isForm=false) {
     else { opts.headers['Content-Type']='application/json'; opts.body=JSON.stringify(body); }
   }
   const res = await fetch('/api'+path, opts);
-  if (!res.ok) { const e = await res.json().catch(()=>({error:res.statusText})); throw new Error(e.error||'Xatolik'); }
+  if (!res.ok) {
+    const e = await res.json().catch(()=>({error:res.statusText}));
+    const err = new Error(e.error||'Xatolik');
+    err.data = e; // qo'shimcha maydonlar (masalan need_verification, user_id, retry_after)
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
 }
 const API = {
   login:    (u,p)      => api('POST','/auth/login',{username:u,password:p}),
   register: (n,u,e,p)  => api('POST','/auth/register',{name:n,username:u,email:e,password:p}),
+  verifyEmail:(userId,code) => api('POST','/auth/verify-email',{user_id:userId,code}),
+  resendCode: (userId) => api('POST','/auth/resend-code',{user_id:userId}),
   forgotPass:(u)       => api('POST','/auth/forgot',{username:u}),
   sendCode:(u)         => api('POST','/auth/send-code',{username:u}),
   verifyCode:(u,c)     => api('POST','/auth/verify-code',{username:u,code:c}),

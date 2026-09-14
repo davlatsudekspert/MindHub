@@ -59,6 +59,8 @@ function switchAmTab(t){
   document.getElementById('am-reg-form').style.display=t==='register'?'block':'none';
   document.getElementById('am-forgot-form').style.display=t==='forgot'?'block':'none';
   document.getElementById('am-tg-profile-form').style.display='none';
+  document.getElementById('am-verify-form').style.display='none';
+  stopVerifyTimer();
   document.getElementById('am-err').classList.remove('on');
   if(t==='login') loadTgWidget('tg-login-container');
   if(t==='forgot') loadTgWidget('tg-forgot-container');
@@ -74,7 +76,13 @@ async function doAmLogin(){
   try{
     const d=await API.login(u,p);
     tokSave(d.token);Tok.set(d.token);closeAuthModal();await boot(d.user);
-  }catch(e){err.textContent=e.message;err.classList.add('on');}
+  }catch(e){
+    if (e.data && e.data.need_verification) {
+      showVerifyStep(e.data.user_id, '');
+    } else {
+      err.textContent=e.message;err.classList.add('on');
+    }
+  }
   finally{btn.disabled=false;btn.textContent='Kirish';}
 }
 
@@ -88,10 +96,111 @@ async function doAmReg(){
   const btn=document.getElementById('am-reg-btn'); btn.disabled=true;btn.textContent='...';
   try{
     const d=await API.register(name,user,email,pass);
-    tokSave(d.token);Tok.set(d.token);closeAuthModal();await boot(d.user);
+    if (d.pending) {
+      showVerifyStep(d.user_id, d.email_masked);
+    } else {
+      // orqaga moslik (eski javob to'g'ridan-to'g'ri token qaytargan bo'lsa)
+      tokSave(d.token);Tok.set(d.token);closeAuthModal();await boot(d.user);
+    }
   }catch(e){err.textContent=e.message;err.classList.add('on');}
   finally{btn.disabled=false;btn.textContent="Ro'yxatdan o'tish";}
 }
+
+/* ═══ EMAIL TASDIQLASH ═══ */
+let _verifyUserId = null;
+let _verifyTimerInterval = null;
+
+function showVerifyStep(userId, emailMasked){
+  _verifyUserId = userId;
+  document.getElementById('am-login-form').style.display='none';
+  document.getElementById('am-reg-form').style.display='none';
+  document.getElementById('am-forgot-form').style.display='none';
+  document.getElementById('am-tg-profile-form').style.display='none';
+  document.getElementById('am-verify-form').style.display='block';
+  document.getElementById('am-verify-email-mask').textContent = emailMasked || '';
+  document.getElementById('am-verify-err').classList.remove('on');
+  const boxes = document.querySelectorAll('#am-verify-form .av-code-box');
+  boxes.forEach(b => b.value='');
+  if (boxes[0]) boxes[0].focus();
+  startVerifyTimer(60);
+  showAuthModal();
+}
+
+function startVerifyTimer(seconds){
+  stopVerifyTimer();
+  const link = document.getElementById('am-verify-resend-link');
+  const timer = document.getElementById('am-verify-timer');
+  let remaining = seconds;
+  link.style.display = 'none';
+  timer.style.display = 'inline';
+  timer.textContent = `${remaining}s`;
+  _verifyTimerInterval = setInterval(() => {
+    remaining--;
+    if (remaining <= 0) {
+      stopVerifyTimer();
+      link.style.display = 'inline';
+      timer.style.display = 'none';
+      return;
+    }
+    timer.textContent = `${remaining}s`;
+  }, 1000);
+}
+function stopVerifyTimer(){
+  if (_verifyTimerInterval) { clearInterval(_verifyTimerInterval); _verifyTimerInterval = null; }
+}
+
+function getVerifyCode(){
+  return Array.from(document.querySelectorAll('#am-verify-form .av-code-box')).map(b => b.value).join('');
+}
+
+async function doVerifyEmail(){
+  const code = getVerifyCode();
+  const err = document.getElementById('am-verify-err'); err.classList.remove('on');
+  if (!/^\d{6}$/.test(code)) { err.textContent='6 xonali kod kiriting'; err.classList.add('on'); return; }
+  const btn = document.getElementById('am-verify-btn'); btn.disabled=true; btn.textContent='...';
+  try{
+    const d = await API.verifyEmail(_verifyUserId, code);
+    tokSave(d.token); Tok.set(d.token); closeAuthModal(); stopVerifyTimer(); await boot(d.user);
+  }catch(e){ err.textContent=e.message; err.classList.add('on'); }
+  finally{ btn.disabled=false; btn.textContent='Tasdiqlash'; }
+}
+
+async function doResendVerifyCode(){
+  const err = document.getElementById('am-verify-err'); err.classList.remove('on');
+  try{
+    await API.resendCode(_verifyUserId);
+    startVerifyTimer(60);
+  }catch(e){
+    err.textContent = e.message; err.classList.add('on');
+    if (e.data && e.data.retry_after) startVerifyTimer(e.data.retry_after);
+  }
+}
+
+// Kod kataklari: avtomatik keyingisiga o'tish, backspace bilan orqaga, paste qo'llab-quvvatlash
+document.addEventListener('input', (ev) => {
+  if (!ev.target.classList || !ev.target.classList.contains('av-code-box')) return;
+  ev.target.value = ev.target.value.replace(/\D/g,'').slice(0,1);
+  if (ev.target.value && ev.target.nextElementSibling && ev.target.nextElementSibling.classList.contains('av-code-box')) {
+    ev.target.nextElementSibling.focus();
+  }
+});
+document.addEventListener('keydown', (ev) => {
+  if (!ev.target.classList || !ev.target.classList.contains('av-code-box')) return;
+  if (ev.key === 'Backspace' && !ev.target.value && ev.target.previousElementSibling && ev.target.previousElementSibling.classList.contains('av-code-box')) {
+    ev.target.previousElementSibling.focus();
+  }
+  if (ev.key === 'Enter') doVerifyEmail();
+});
+document.addEventListener('paste', (ev) => {
+  if (!ev.target.classList || !ev.target.classList.contains('av-code-box')) return;
+  const text = (ev.clipboardData || window.clipboardData).getData('text').replace(/\D/g,'').slice(0,6);
+  if (!text) return;
+  ev.preventDefault();
+  const boxes = Array.from(document.querySelectorAll('#am-verify-form .av-code-box'));
+  text.split('').forEach((ch,i) => { if (boxes[i]) boxes[i].value = ch; });
+  const last = boxes[Math.min(text.length,6)-1];
+  if (last) last.focus();
+});
 
 async function doAmForgot(){
   const uname=(document.getElementById('am-forgot-uname').value||'').trim();
@@ -327,5 +436,6 @@ document.addEventListener('DOMContentLoaded',async()=>{
 window.showAuthModal=showAuthModal;window.closeAuthModal=closeAuthModal;window.switchAmTab=switchAmTab;
 window.requireAuth=requireAuth;window.doAmLogin=doAmLogin;window.doAmReg=doAmReg;window.doAmForgot=doAmForgot;
 window.doReset=doReset;window.closeReset=closeReset;window.openForgotFromReset=openForgotFromReset;
+window.showVerifyStep=showVerifyStep;window.doVerifyEmail=doVerifyEmail;window.doResendVerifyCode=doResendVerifyCode;
 window.syncTopbar=syncTopbar;window.boot=boot;window.toggleTheme=toggleTheme;window.doLogout=doLogout;
 window.onTopSearch=onTopSearch;window.setBnActive=setBnActive;window.toggleMobileSearch=toggleMobileSearch;window.openMobileSearch=openMobileSearch;

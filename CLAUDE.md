@@ -20,4 +20,22 @@ ichida g'oya va muammolarini ulashadi, izoh va reaksiya qoldiradi, shaxsiy xabar
 
 ## Env o'zgaruvchilar
 DATABASE_URL, SECRET, PORT, DATA_DIR, APP_URL, RESEND_API_KEY, MAIL_FROM,
-TELEGRAM_BOT_TOKEN, AI_PROVIDER, AI_API_KEY
+TELEGRAM_BOT_TOKEN, ALLOWED_ORIGINS, AI_PROVIDER, AI_API_KEY
+
+## Migratsiyalar
+- Schema o'zgarishlari migrations/NNN_nom.sql fayllari orqali (src/migrate.js,
+  server.js#init() dan keyin avtomatik ishga tushadi). Yangi fayl qo'shsang,
+  tartib raqamini oshir (002_, 003_, ...) — src/db.js dagi asosiy SCHEMA'ga
+  to'g'ridan-to'g'ri ustun qo'shma.
+
+## Parol va sessiya
+- Parollar scrypt bilan hashlanadi (src/helpers.js#hashPassword/verifyPassword).
+  Eski hmac formatidagi parollar login paytida shaffof ravishda qayta hashlanadi.
+- JWT tokenlar users.pass_version bilan bog'langan — parol o'zgarganda eski
+  tokenlar avtomatik bekor bo'ladi (src/routes.js#getAuth bazani tekshiradi).
+
+## Email
+- src/mailer.js — Resend REST API orqali. RESEND_API_KEY yo'q bo'lsa, kod
+  konsolga chiqadi (lokal test uchun). nodemailer ishlatilmaydi.
+- Ro'yxatdan o'tish 2 bosqichli: /api/auth/register pending holat qaytaradi,
+  /api/auth/verify-email kod bilan tasdiqlaydi va to'liq token beradi.

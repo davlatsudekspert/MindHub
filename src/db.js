@@ -414,6 +414,16 @@ const Q = {
 
   /* admin */
   adminStats: () => db.get("SELECT (SELECT COUNT(*)::int FROM users) as users,(SELECT COUNT(*)::int FROM posts) as posts,(SELECT COUNT(*)::int FROM comments) as comments,(SELECT COUNT(*)::int FROM communities) as communities,(SELECT COUNT(*)::int FROM reports WHERE status='pending') as reports"),
+
+  /* email tasdiqlash (FAZA 2) */
+  uSetEmailVerified: (id) => db.run("UPDATE users SET email_verified=1,email_verified_at=extract(epoch from now())::int WHERE id=$1", [id]),
+  ecInsert:         (user_id, email, code_hash, purpose, expires_at, ip) => db.run('INSERT INTO email_codes(user_id,email,code_hash,purpose,expires_at,ip) VALUES($1,$2,$3,$4,$5,$6)', [user_id, email, code_hash, purpose, expires_at, ip || null]),
+  ecGetActive:      (user_id, purpose) => db.get("SELECT * FROM email_codes WHERE user_id=$1 AND purpose=$2 AND used=0 AND expires_at>extract(epoch from now())::int ORDER BY created_at DESC LIMIT 1", [user_id, purpose]),
+  ecLatest:         (user_id, purpose) => db.get('SELECT * FROM email_codes WHERE user_id=$1 AND purpose=$2 ORDER BY created_at DESC LIMIT 1', [user_id, purpose]),
+  ecIncAttempts:    (id) => db.run('UPDATE email_codes SET attempts=attempts+1 WHERE id=$1', [id]),
+  ecMarkUsed:       (id) => db.run('UPDATE email_codes SET used=1 WHERE id=$1', [id]),
+  ecInvalidateOthers:(user_id, purpose) => db.run('UPDATE email_codes SET used=1 WHERE user_id=$1 AND purpose=$2 AND used=0', [user_id, purpose]),
+  ecCountLastHour:  (user_id, purpose) => db.get("SELECT COUNT(*)::int as c FROM email_codes WHERE user_id=$1 AND purpose=$2 AND created_at>extract(epoch from now())::int-3600", [user_id, purpose]),
 };
 
 /* ── Seed ── */

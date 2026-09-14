@@ -51,6 +51,30 @@
         <div id="tg-forgot-container" style="display:flex;justify-content:center"></div>
       </div>
     </div>
+    <div id="am-verify-form" style="display:none">
+      <div style="text-align:center;margin-bottom:16px">
+        <div style="font-size:32px;margin-bottom:8px">📧</div>
+        <div style="font-size:14px;font-weight:600">Emailni tasdiqlang</div>
+        <div style="font-size:12px;color:var(--tx3);margin-top:4px">
+          <span id="am-verify-email-mask"></span> manziliga 6 xonali kod yubordik
+        </div>
+      </div>
+      <div id="am-verify-err" class="auth-err"></div>
+      <div class="form-row" style="display:flex;gap:8px;justify-content:center">
+        <input class="inp av-code-box" maxlength="1" inputmode="numeric" style="width:42px;text-align:center;font-size:20px;padding:10px 0">
+        <input class="inp av-code-box" maxlength="1" inputmode="numeric" style="width:42px;text-align:center;font-size:20px;padding:10px 0">
+        <input class="inp av-code-box" maxlength="1" inputmode="numeric" style="width:42px;text-align:center;font-size:20px;padding:10px 0">
+        <input class="inp av-code-box" maxlength="1" inputmode="numeric" style="width:42px;text-align:center;font-size:20px;padding:10px 0">
+        <input class="inp av-code-box" maxlength="1" inputmode="numeric" style="width:42px;text-align:center;font-size:20px;padding:10px 0">
+        <input class="inp av-code-box" maxlength="1" inputmode="numeric" style="width:42px;text-align:center;font-size:20px;padding:10px 0">
+      </div>
+      <button class="btn btn-gold" style="width:100%;margin-top:8px" id="am-verify-btn" onclick="doVerifyEmail()">Tasdiqlash</button>
+      <div style="text-align:center;margin-top:12px;font-size:12px;color:var(--tx3)">
+        Kod kelmadimi?
+        <a href="#" id="am-verify-resend-link" onclick="doResendVerifyCode();return false">Qayta yuborish</a>
+        <span id="am-verify-timer" style="display:none"></span>
+      </div>
+    </div>
   </div>
 </div>
 

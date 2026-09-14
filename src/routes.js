@@ -7,7 +7,9 @@ const { Q, db } = require('./db');
 const { verifyToken, makeToken, uid, randColor, hashPassword, verifyPassword, isScryptHash } = require('./helpers');
 const ws = require('./ws');
 const { corsHeaders } = require('./cors');
-const { checkRateLimit, checkRateLimitByUser } = require('./ratelimit');
+const { checkRateLimit, checkRateLimitByUser, getClientIp } = require('./ratelimit');
+
+function sha256Hex(s) { return crypto.createHash('sha256').update(String(s)).digest('hex'); }
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 const UPLOAD   = path.join(DATA_DIR, 'uploads');
@@ -295,7 +297,10 @@ async function route(req, res) {
     await Q.uInsert(newId, username.toLowerCase(), name.trim(), email, crypto.randomBytes(32).toString('hex'), randColor());
     await Q.uSetTgId(pending.tgId, newId);
     if (pending.photo_url) await Q.uUpdAv(pending.photo_url, newId);
-    return json(res, { token: makeToken(newId), user: await Q.uById(newId) });
+    // Telegram orqali kirgan foydalanuvchilar uchun email tasdiqlash talab qilinmaydi
+    await Q.uSetEmailVerified(newId);
+    const tgUser = await Q.uById(newId);
+    return json(res, { token: makeToken(newId, tgUser.pass_version || 1), user: tgUser });
   }
   if (p === '/api/auth/register' && m === 'POST') {
     const rl = checkRateLimit(req, 'register', 5, 3600);
@@ -305,11 +310,72 @@ async function route(req, res) {
     if (!username || !name || !email || !password) return json(res, { error: "Barcha maydonlarni to'ldiring" }, 400);
     if (password.length < 6) return json(res, { error: 'Parol kamida 6 belgi' }, 400);
     if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) return json(res, { error: 'Username: 3-20 belgi, faqat harf/raqam/_' }, 400);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json(res, { error: "Email formati noto'g'ri" }, 400);
     if (await Q.uExists(username, email)) return json(res, { error: 'Bu username yoki email band' }, 409);
     const id = uid();
-    await Q.uInsert(id, username.toLowerCase(), name, email.toLowerCase(), hashPassword(password), '#' + Math.floor(Math.random()*0xFFFFFF).toString(16).padStart(6,'0'));
-    const newUser = await Q.uById(id);
-    return json(res, { token: makeToken(id, newUser.pass_version || 1), user: newUser }, 201);
+    const emailLower = email.toLowerCase();
+    await Q.uInsert(id, username.toLowerCase(), name, emailLower, hashPassword(password), '#' + Math.floor(Math.random()*0xFFFFFF).toString(16).padStart(6,'0'));
+    // 2 bosqichli ro'yxatdan o'tish: to'liq token BERILMAYDI — avval emailga
+    // yuborilgan kodni tasdiqlash kerak (/api/auth/verify-email)
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    const expiresAt = Math.floor(Date.now()/1000) + 900;
+    await Q.ecInsert(id, emailLower, sha256Hex(code), 'register', expiresAt, getClientIp(req));
+    try {
+      const { sendVerifyCode } = require('./mailer');
+      await sendVerifyCode(emailLower, code, username);
+    } catch (e) { console.error('sendVerifyCode xatoligi:', e.message); }
+    return json(res, {
+      pending: true,
+      user_id: id,
+      email_masked: emailLower.replace(/(.{2}).*(@.*)/, '$1***$2'),
+      expires_in: 900
+    }, 201);
+  }
+  if (p === '/api/auth/verify-email' && m === 'POST') {
+    const rl = checkRateLimit(req, 'verify-email', 20, 3600);
+    if (!rl.ok) return tooManyRequests(res, rl.retryAfter);
+    const b = await readBody(req);
+    const { user_id, code } = b;
+    if (!user_id || !code) return json(res, { error: "Ma'lumotlar to'liq emas" }, 400);
+    const row = await Q.ecGetActive(user_id, 'register');
+    if (!row) return json(res, { error: "Kod topilmadi yoki muddati tugagan. Yangi kod so'rang" }, 400);
+    if (row.attempts >= row.max_attempts) return json(res, { error: "Urinishlar tugadi, yangi kod so'rang" }, 429);
+    if (sha256Hex(String(code).trim()) !== row.code_hash) {
+      await Q.ecIncAttempts(row.id);
+      return json(res, { error: "Kod noto'g'ri" }, 400);
+    }
+    await Q.ecMarkUsed(row.id);
+    await Q.uSetEmailVerified(user_id);
+    const user = await Q.uById(user_id);
+    if (!user) return json(res, { error: 'Topilmadi' }, 404);
+    try { require('./mailer').sendWelcome(user.email, user.username).catch(()=>{}); } catch {}
+    return json(res, { token: makeToken(user_id, user.pass_version || 1), user });
+  }
+  if (p === '/api/auth/resend-code' && m === 'POST') {
+    const rl = checkRateLimit(req, 'resend-code', 10, 3600);
+    if (!rl.ok) return tooManyRequests(res, rl.retryAfter);
+    const b = await readBody(req);
+    const { user_id } = b;
+    if (!user_id) return json(res, { error: 'user_id kerak' }, 400);
+    const user = await Q.uByIdFull(user_id);
+    if (!user) return json(res, { error: 'Topilmadi' }, 404);
+    if (user.email_verified) return json(res, { error: 'Email allaqachon tasdiqlangan' }, 400);
+    const last = await Q.ecLatest(user_id, 'register');
+    if (last) {
+      const elapsed = Math.floor(Date.now()/1000) - last.created_at;
+      if (elapsed < 60) return json(res, { error: `${60-elapsed} soniyadan keyin qayta urinib ko'ring`, retry_after: 60-elapsed }, 429);
+    }
+    const countRow = await Q.ecCountLastHour(user_id, 'register');
+    if (countRow.c >= 5) return json(res, { error: "Bir soatda faqat 5 marta so'rash mumkin" }, 429);
+    await Q.ecInvalidateOthers(user_id, 'register');
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    const expiresAt = Math.floor(Date.now()/1000) + 900;
+    await Q.ecInsert(user_id, user.email, sha256Hex(code), 'register', expiresAt, getClientIp(req));
+    try {
+      const { sendVerifyCode } = require('./mailer');
+      await sendVerifyCode(user.email, code, user.username);
+    } catch (e) { console.error('sendVerifyCode xatoligi:', e.message); }
+    return json(res, { ok: true });
   }
   if (p === '/api/auth/login' && m === 'POST') {
     const rl = checkRateLimit(req, 'login', 10, 900);
@@ -323,6 +389,9 @@ async function route(req, res) {
       // Shaffof migratsiya: eski hmac formatidagi parolni scrypt'ga qayta hashlab yozib qo'yamiz
       await Q.uUpdPass(hashPassword(password), user.id);
     }
+    if (!user.email_verified) {
+      return json(res, { error: 'Email tasdiqlanmagan', need_verification: true, user_id: user.id }, 403);
+    }
     if (user.is_banned) {
       if (user.ban_expires_at && Math.floor(Date.now()/1000) > user.ban_expires_at) { await Q.uUnban(user.id); }
       else { const expText = user.ban_expires_at ? ` (${new Date(user.ban_expires_at*1000).toLocaleDateString('uz-UZ')} gacha)` : ''; return json(res, { error: `Hisob bloklangan: ${user.ban_reason || ''}${expText}` }, 403); }
@@ -331,16 +400,22 @@ async function route(req, res) {
     return json(res, { token: makeToken(user.id, freshUser.pass_version || 1), user: freshUser });
   }
   if (p === '/api/auth/forgot' && m === 'POST') {
+    const rl = checkRateLimit(req, 'forgot', 5, 3600);
+    if (!rl.ok) return tooManyRequests(res, rl.retryAfter);
     const b = await readBody(req);
     const uname = (b.username || '').trim().toLowerCase();
     if (!uname) return json(res, { error: 'Username kiriting' }, 400);
     await Q.rtClean();
     const user = await Q.uByUsername(uname);
     if (user) {
-      const token = require('crypto').randomBytes(32).toString('hex');
+      const token = crypto.randomBytes(32).toString('hex');
       await Q.rtInsert(token, user.id, Math.floor(Date.now()/1000) + 3600);
       const appUrl = process.env.APP_URL || `http://localhost:${process.env.PORT || 3000}`;
-      console.log('\n=== PAROL TIKLASH ===\nFoydalanuvchi:', user.username, '\nHavola:', `${appUrl}/?reset_token=${token}\n`);
+      const link = `${appUrl}/?reset_token=${token}`;
+      try {
+        const full = await Q.uByLogin(uname);
+        await require('./mailer').sendPasswordResetLink(full.email, link, full.username);
+      } catch (e) { console.error('sendPasswordResetLink xatoligi:', e.message); }
     }
     return json(res, { ok: true });
   }
@@ -378,9 +453,9 @@ async function route(req, res) {
       await Q.vcInsert(user.id, code, expiresAt);
       let sent = false;
       try {
-        const { sendVerifyCode } = require('./email');
-        await sendVerifyCode(user.email, code, user.username);
-        sent = true;
+        const { sendVerifyCode } = require('./mailer');
+        const r = await sendVerifyCode(user.email, code, user.username);
+        sent = !r || !r.dev; // dev rejimida (RESEND_API_KEY yo'q) faqat konsolga chiqadi — pastdagi TG fallback ham sinab ko'rilsin
       } catch (e) {
         console.error('Email xatoligi:', e.message);
       }
