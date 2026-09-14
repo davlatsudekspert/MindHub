@@ -4,7 +4,8 @@
   "description": "MindHub - O'zbek Reddit",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test --test-concurrency=1"
   },
   "dependencies": {
     "pg": "^8.13.1"

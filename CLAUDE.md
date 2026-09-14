@@ -83,3 +83,17 @@ R2_PUBLIC_URL
 - Yechim UI: post-title'da "✓ Yechilgan" belgisi, izohda "✓ Yechim deb belgilash"
   tugmasi (faqat post egasi/admin), ekspert taklifi bildirishnomasi maxsus
   ko'rinishda (public/js/features.js#loadNotifs).
+
+## Testlar
+- `npm test` (`node --test`, node:test — tashqi kutubxona kerak emas).
+  Haqiqiy PostgreSQL kerak: `DATABASE_URL=postgres://postgres:postgres@localhost:5432/mindhub_test npm test`
+  (baza oldindan yaratilgan bo'lishi kerak — `createdb mindhub_test`).
+- test/_helpers.js — routelarni haqiqiy server/port ochmasdan chaqiradi
+  (soxta req/res). Fayl nomi ATAYLAB `_helpers.js` (`helpers.test.js` emas) —
+  `node --test` standart holatda test/ papkasidagi HAR QANDAY faylni emas,
+  balki faqat *.test.js'larni yugurtiradi, lekin ehtiyot chorasi sifatida shunday.
+- Testlar ketma-ket ishlaydi (`--test-concurrency=1`) — parallel fayllar bitta
+  bazada bir vaqtda CREATE TABLE IF NOT EXISTS ishga tushirsa, Postgres'da
+  `pg_type_typname_nsp_index` poyga holati (race condition) yuzaga keladi.
+- CI: `.github/workflows/ci.yml` — har push/PR'da node --check + npm test
+  (Postgres service container bilan).

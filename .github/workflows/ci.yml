@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mindhub_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/mindhub_test
+      SECRET: ci-test-secret-not-for-production
+      TELEGRAM_BOT_TOKEN: dummy-ci-token
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Syntax check (node --check)
+        run: |
+          set -e
+          for f in server.js tg-bot.js scripts/*.js src/*.js src/ai/*.js public/js/*.js test/*.js; do
+            node --check "$f"
+          done
+
+      - name: Migration check (fresh DB boots cleanly)
+        run: |
+          node -e "
+            const { init } = require('./src/db');
+            const { migrate } = require('./src/migrate');
+            init().then(migrate).then(() => { console.log('✅ migratsiyalar toza bazada muvaffaqiyatli'); process.exit(0); })
+              .catch(e => { console.error(e); process.exit(1); });
+          "
+
+      - name: Run tests
+        run: npm test

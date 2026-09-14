@@ -236,7 +236,7 @@ const SCHEMA = `
 
 const Q = {
   /* users */
-  uById:      (id) => db.get('SELECT id,username,name,email,color,bio,avatar,banner,karma,followers,is_admin,is_banned,ban_reason,ban_expires_at,created_at,phone,pass_version FROM users WHERE id=$1', [id]),
+  uById:      (id) => db.get('SELECT id,username,name,email,color,bio,avatar,banner,karma,followers,is_admin,is_banned,ban_reason,ban_expires_at,created_at,phone,pass_version,email_verified FROM users WHERE id=$1', [id]),
   uByIdFull:  (id) => db.get('SELECT * FROM users WHERE id=$1', [id]),
   uByLogin:   (u) => db.get('SELECT * FROM users WHERE lower(username)=lower($1) OR lower(email)=lower($1)', [u]),
   uBySlug:    (param) => db.get('SELECT id,username,name,color,bio,avatar,banner,karma,followers,is_admin,is_banned,created_at FROM users WHERE lower(username)=lower($1) OR id=$1', [param]),
@@ -533,7 +533,11 @@ function hmac(s) { return crypto.createHmac('sha256', SECRET).update(s).digest('
 
 async function seed() {
   const SYS = 'u_system';
-  const sys = await Q.uById(SYS);
+  // Diqqat: Q.uById dagi to'liq ustunlar ro'yxati migratsiyalar qo'shgan
+  // ustunlarga (masalan email_verified) tayanishi mumkin, lekin seed() init()
+  // ichida migrate()dan OLDIN chaqiriladi — shuning uchun bu yerda faqat
+  // asosiy SCHEMA'da bo'lgan ustunlarga tayanadigan minimal so'rov ishlatiladi.
+  const sys = await db.get('SELECT id,email FROM users WHERE id=$1', [SYS]);
   if (!sys) {
     await Q.uInsert(SYS, 'mindhub', 'MindHub', 'system@mindhub.uz', hmac('_sys_'), '#C8922A');
     await db.run('UPDATE users SET is_admin=1 WHERE id=$1', [SYS]);
