@@ -210,7 +210,19 @@ async function fmtPost(p, uid2) {
       };
     }
   } catch {}
-  return { ...p, my_vote: myVote, saved, poll, ago: ago(p.created_at) };
+  // Klaster ma'lumoti — faqat muammo/g'oya postlari uchun (feed tezligini saqlash uchun
+  // oddiy postlar uchun bu qidiruv butunlay o'tkazib yuboriladi)
+  let clusterInfo = { cluster_id: null, cluster_title: null, cluster_size: null };
+  if (p.kind === 'problem' || p.kind === 'idea') {
+    try {
+      const cm = await Q.cmByPostId(p.id);
+      if (cm) {
+        const cl = await Q.clById(cm.cluster_id);
+        if (cl) clusterInfo = { cluster_id: cl.id, cluster_title: cl.title, cluster_size: cl.member_count };
+      }
+    } catch {}
+  }
+  return { ...p, my_vote: myVote, saved, poll, ...clusterInfo, ago: ago(p.created_at) };
 }
 async function fmtCmt(c, uid2) {
   const myVote = uid2 ? (await Q.cvGet(uid2, c.id))?.vote || 0 : 0;
@@ -842,7 +854,7 @@ async function route(req, res) {
     const rl = checkRateLimitByUser(u2, 'posts', 10, 3600);
     if (!rl.ok) return tooManyRequests(res, rl.retryAfter);
     const ct = req.headers['content-type'] || '';
-    let title='', body='', comSlug='', type='text', link=null, image=null, video=null, audio=null, flair=null;
+    let title='', body='', comSlug='', type='text', link=null, image=null, video=null, audio=null, flair=null, kind='post';
     let pollQuestion=null, pollOptions=null, pollDays=3;
 
     if (ct.includes('multipart')) {
@@ -853,6 +865,7 @@ async function route(req, res) {
       type     = fields.type || 'text';
       link     = fields.link || null;
       flair    = fields.flair || null;
+      kind     = fields.kind || 'post';
       pollQuestion = fields.poll_question || null;
       pollOptions  = fields.poll_options  ? JSON.parse(fields.poll_options) : null;
       pollDays     = parseInt(fields.poll_days) || 3;
@@ -871,20 +884,30 @@ async function route(req, res) {
       type     = b.type || 'text';
       link     = b.link || null;
       flair    = b.flair || null;
+      kind     = b.kind || 'post';
       pollQuestion = b.poll_question || null;
       pollOptions  = b.poll_options  || null;
       pollDays     = parseInt(b.poll_days) || 3;
     }
     if (!title)   return json(res, { error: 'Sarlavha kerak' }, 400);
     if (!comSlug) return json(res, { error: 'Jamoa tanlang' }, 400);
+    if (!['post','problem','idea'].includes(kind)) kind = 'post';
     const com = await Q.comBySlug(comSlug);
     if (!com) return json(res, { error: 'Jamoa topilmadi' }, 404);
 
     const pid = uid();
-    await Q.pInsert(pid, u2, com.id, title, body, link, image, video, audio, type, flair);
+    await Q.pInsert(pid, u2, com.id, title, body, link, image, video, audio, type, flair, kind);
     await Q.pScore(1,1,0,pid);
     await Q.pvUpsert(u2, pid, 1);
     await Q.uKarma(1, u2);
+
+    // AI klasterlash: faqat 'problem'/'idea' postlari uchun, va faqat AI yoqilgan bo'lsa
+    if (['problem','idea'].includes(kind)) {
+      try {
+        const provider = require('./ai/provider');
+        if (provider.enabled) await Q.ajInsert(uid(), 'embed', { post_id: pid });
+      } catch (e) { console.error('ai embed job enqueue xatoligi:', e.message); }
+    }
 
     // Poll
     if (pollQuestion && Array.isArray(pollOptions) && pollOptions.length >= 2) {
@@ -974,6 +997,115 @@ async function route(req, res) {
     const out = [];
     for (const r of rows) out.push(await fmtPost(r, u2));
     return json(res, out);
+  }
+
+  /* ══ AI KLASTERLAR (FAZA 3) ══ */
+  if (p === '/api/clusters' && m === 'GET') {
+    const sort = q.sort || 'hot';
+    const limit = Math.min(parseInt(q.limit) || 20, 50);
+    const cursor = Math.max(parseInt(q.cursor) || 0, 0);
+    const { CLUSTER_MIN_SIZE } = require('./ai/cluster');
+    let rows;
+    if (sort === 'new') rows = await Q.clListNew(CLUSTER_MIN_SIZE, limit, cursor);
+    else if (sort === 'size') rows = await Q.clListSize(CLUSTER_MIN_SIZE, limit, cursor);
+    else if (sort === 'unsolved') rows = await Q.clListUnsolved(CLUSTER_MIN_SIZE, limit, cursor);
+    else rows = await Q.clListRanked(CLUSTER_MIN_SIZE, limit, cursor);
+    const out = [];
+    for (const c of rows) {
+      const samples = await Q.cmSamplePosts(c.id, 3);
+      out.push({
+        id: c.id, title: c.title, summary: c.summary, status: c.status, kind: c.kind,
+        member_count: c.member_count, unique_users: c.unique_users,
+        growth_7d: c.growth_7d || 0, last_activity_at: c.last_activity_at,
+        top_community_id: c.top_community_id,
+        sample_posts: samples.map(s => ({ id: s.id, title: s.title, username: s.username })),
+      });
+    }
+    return json(res, { clusters: out, next_cursor: cursor + rows.length });
+  }
+  if (p.match(/^\/api\/clusters\/[^/]+$/) && m === 'GET') {
+    const cid = p.split('/')[3];
+    const cluster = await Q.clById(cid);
+    if (!cluster) return json(res, { error: 'Topilmadi' }, 404);
+    const limit = Math.min(parseInt(q.limit) || 20, 50);
+    const offset = Math.max(parseInt(q.offset) || 0, 0);
+    const members = await Q.cmByCluster(cid, limit, offset);
+    const daily = await Q.cdSeries(cid, 30);
+    return json(res, {
+      ...cluster,
+      posts: members.map(m => ({
+        post_id: m.post_id, title: m.title, username: m.username, avatar: m.avatar, color: m.color,
+        similarity: m.similarity, joined_at: m.joined_at, created_at: m.post_created_at,
+      })),
+      daily_growth: daily,
+    });
+  }
+  if (p === '/api/ai/similar' && m === 'POST') {
+    const u2 = await getAuthNotBanned(req, res); if (!u2) return true;
+    const rl = checkRateLimitByUser(u2, 'ai-similar', 20, 60);
+    if (!rl.ok) return tooManyRequests(res, rl.retryAfter);
+    const provider = require('./ai/provider');
+    if (!provider.enabled) return json(res, { clusters: [] });
+    const b = await readBody(req);
+    const title = (b.title || '').trim();
+    const body2 = (b.body || '').trim();
+    if (title.length < 10) return json(res, { clusters: [] });
+    try {
+      const { cosineSim, parseVec } = require('./ai/cluster');
+      const text = `${title}\n${body2}`.slice(0, 2000);
+      const vectors = await provider.embed([text]);
+      if (!vectors || !vectors[0]) return json(res, { clusters: [] });
+      const embedding = vectors[0];
+      const clusters = await Q.clAllActive();
+      const scored = clusters
+        .map(c => ({ c, sim: cosineSim(embedding, parseVec(c.centroid)) }))
+        .filter(x => x.sim > 0.5)
+        .sort((a, b2) => b2.sim - a.sim)
+        .slice(0, 3);
+      const out = [];
+      for (const { c, sim } of scored) {
+        const full = await Q.clById(c.id);
+        const samples = await Q.cmSamplePosts(c.id, 3);
+        out.push({
+          id: c.id, title: full.title, member_count: full.member_count,
+          similarity: Math.round(sim * 100) / 100,
+          sample_posts: samples.map(s => ({ id: s.id, title: s.title })),
+        });
+      }
+      return json(res, { clusters: out });
+    } catch (e) {
+      console.error('/api/ai/similar xatoligi:', e.message);
+      return json(res, { clusters: [] });
+    }
+  }
+  if (p === '/api/stats/problems' && m === 'GET') {
+    const topClusters = await Q.clListRanked(1, 10, 0);
+    const topReporters = await Q.stTopReporters(10);
+    const byCommunity = await Q.stByCommunity();
+    const solvedRow = await Q.stSolvedRate();
+    const trending = await Q.stTrending(10);
+    return json(res, {
+      top_clusters: topClusters.map(c => ({ id: c.id, title: c.title, member_count: c.member_count, status: c.status })),
+      top_reporters: topReporters,
+      by_community: byCommunity,
+      solved_rate: solvedRow.total > 0 ? Math.round((solvedRow.solved / solvedRow.total) * 100) : 0,
+      trending: trending.map(c => ({ id: c.id, title: c.title, member_count: c.member_count, growth_7d: c.growth_7d })),
+    });
+  }
+  if (p.match(/^\/api\/users\/[^/]+\/problem-profile$/) && m === 'GET') {
+    const targetId = p.split('/')[3];
+    const clusterIds = await Q.cmForUserClusters(targetId);
+    const total = clusterIds.length;
+    let solved = 0;
+    const clustersOut = [];
+    for (const row of clusterIds) {
+      const cl = await Q.clById(row.cluster_id);
+      if (cl) {
+        if (cl.status === 'solved') solved++;
+        clustersOut.push({ id: cl.id, title: cl.title, status: cl.status, member_count: cl.member_count });
+      }
+    }
+    return json(res, { user_id: targetId, total_clusters: total, solved_count: solved, clusters: clustersOut });
   }
 
   /* ══ COMMENTS ══ */

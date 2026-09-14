@@ -287,7 +287,7 @@ const Q = {
   pComNew: (slug, off) => db.all('SELECT p.*,u.username,u.color,u.avatar,c.slug as cslug,c.name as cname,c.color as ccolor FROM posts p JOIN users u ON p.user_id=u.id JOIN communities c ON p.community_id=c.id WHERE lower(c.slug)=lower($1) ORDER BY p.created_at DESC LIMIT 25 OFFSET $2', [slug, off]),
   pByUser: (user_id) => db.all('SELECT p.*,u.username,u.color,u.avatar,c.slug as cslug,c.name as cname,c.color as ccolor FROM posts p JOIN users u ON p.user_id=u.id JOIN communities c ON p.community_id=c.id WHERE p.user_id=$1 ORDER BY p.created_at DESC LIMIT 25', [user_id]),
   pOne:    (id) => db.get('SELECT p.*,u.username,u.color,u.avatar,c.slug as cslug,c.name as cname,c.color as ccolor FROM posts p JOIN users u ON p.user_id=u.id JOIN communities c ON p.community_id=c.id WHERE p.id=$1', [id]),
-  pInsert: (id, user_id, community_id, title, body, link, image, video, audio, type, flair) => db.run('INSERT INTO posts(id,user_id,community_id,title,body,link,image,video,audio,type,flair) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', [id, user_id, community_id, title, body, link, image, video, audio, type, flair]),
+  pInsert: (id, user_id, community_id, title, body, link, image, video, audio, type, flair, kind) => db.run('INSERT INTO posts(id,user_id,community_id,title,body,link,image,video,audio,type,flair,kind) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)', [id, user_id, community_id, title, body, link, image, video, audio, type, flair, kind || 'post']),
   pDelete: (id) => db.run('DELETE FROM posts WHERE id=$1', [id]),
   pUpdate: (title, body, id, user_id) => db.run('UPDATE posts SET title=$1,body=$2 WHERE id=$3 AND user_id=$4', [title, body, id, user_id]),
   pOwner:  (id) => db.get('SELECT user_id,community_id FROM posts WHERE id=$1', [id]),
@@ -424,6 +424,54 @@ const Q = {
   ecMarkUsed:       (id) => db.run('UPDATE email_codes SET used=1 WHERE id=$1', [id]),
   ecInvalidateOthers:(user_id, purpose) => db.run('UPDATE email_codes SET used=1 WHERE user_id=$1 AND purpose=$2 AND used=0', [user_id, purpose]),
   ecCountLastHour:  (user_id, purpose) => db.get("SELECT COUNT(*)::int as c FROM email_codes WHERE user_id=$1 AND purpose=$2 AND created_at>extract(epoch from now())::int-3600", [user_id, purpose]),
+
+  /* ══ FAZA 3: AI klasterlash ══ */
+  /* post embeddings */
+  peUpsert: (post_id, embedding, model, norm) => db.run('INSERT INTO post_embeddings(post_id,embedding,model,norm) VALUES($1,$2,$3,$4) ON CONFLICT (post_id) DO UPDATE SET embedding=EXCLUDED.embedding,model=EXCLUDED.model,norm=EXCLUDED.norm', [post_id, JSON.stringify(embedding), model, norm]),
+  peGet:    (post_id) => db.get('SELECT * FROM post_embeddings WHERE post_id=$1', [post_id]),
+
+  /* clusters */
+  clInsert:  (id, title, summary, centroid, kind) => db.run('INSERT INTO clusters(id,title,summary,centroid,kind,member_count,unique_users,last_activity_at) VALUES($1,$2,$3,$4,$5,1,1,extract(epoch from now())::int)', [id, title, summary || '', JSON.stringify(centroid), kind || 'problem']),
+  clById:    (id) => db.get('SELECT * FROM clusters WHERE id=$1', [id]),
+  clAllActive: () => db.all("SELECT id,centroid,member_count FROM clusters WHERE status!='archived'"),
+  clUpdateAfterJoin: (id, centroid, memberCount, uniqueUsers) => db.run('UPDATE clusters SET centroid=$1,member_count=$2,unique_users=$3,last_activity_at=extract(epoch from now())::int WHERE id=$4', [JSON.stringify(centroid), memberCount, uniqueUsers, id]),
+  clUpdateSummary: (id, title, summary) => db.run('UPDATE clusters SET title=$1,summary=$2 WHERE id=$3', [title, summary, id]),
+  clSetStatus: (id, status) => db.run('UPDATE clusters SET status=$1 WHERE id=$2', [status, id]),
+  clSetTopCommunity: (id, community_id) => db.run('UPDATE clusters SET top_community_id=$1 WHERE id=$2', [community_id, id]),
+  clListRanked: (minSize, limit, offset) => db.all(
+    `SELECT c.*,
+       (SELECT COUNT(*)::int FROM cluster_daily cd WHERE cd.cluster_id=c.id AND cd.day>=CURRENT_DATE-7) as growth_7d
+     FROM clusters c
+     WHERE c.member_count>=$1
+     ORDER BY (c.unique_users*3 + c.member_count + COALESCE((SELECT SUM(new_posts) FROM cluster_daily cd WHERE cd.cluster_id=c.id AND cd.day>=CURRENT_DATE-7),0)*5) * (CASE WHEN c.status='open' THEN 1.3 ELSE 1 END) DESC
+     LIMIT $2 OFFSET $3`, [minSize, limit, offset]),
+  clListNew: (minSize, limit, offset) => db.all('SELECT * FROM clusters WHERE member_count>=$1 ORDER BY created_at DESC LIMIT $2 OFFSET $3', [minSize, limit, offset]),
+  clListSize: (minSize, limit, offset) => db.all('SELECT * FROM clusters WHERE member_count>=$1 ORDER BY member_count DESC LIMIT $2 OFFSET $3', [minSize, limit, offset]),
+  clListUnsolved: (minSize, limit, offset) => db.all("SELECT * FROM clusters WHERE member_count>=$1 AND status='open' ORDER BY member_count DESC LIMIT $2 OFFSET $3", [minSize, limit, offset]),
+
+  /* cluster members */
+  cmInsert: (cluster_id, post_id, user_id, similarity) => db.run('INSERT INTO cluster_members(cluster_id,post_id,user_id,similarity) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING', [cluster_id, post_id, user_id, similarity]),
+  cmByCluster: (cluster_id, limit, offset) => db.all('SELECT cm.*,p.title,p.created_at as post_created_at,u.username,u.avatar,u.color FROM cluster_members cm JOIN posts p ON cm.post_id=p.id JOIN users u ON cm.user_id=u.id WHERE cm.cluster_id=$1 ORDER BY cm.joined_at DESC LIMIT $2 OFFSET $3', [cluster_id, limit, offset]),
+  cmUniqueUsers: (cluster_id) => db.get('SELECT COUNT(DISTINCT user_id)::int as c FROM cluster_members WHERE cluster_id=$1', [cluster_id]),
+  cmSamplePosts: (cluster_id, limit) => db.all('SELECT p.id,p.title,p.created_at,u.username FROM cluster_members cm JOIN posts p ON cm.post_id=p.id JOIN users u ON p.user_id=u.id WHERE cm.cluster_id=$1 ORDER BY cm.joined_at DESC LIMIT $2', [cluster_id, limit]),
+  cmByPostId: (post_id) => db.get('SELECT * FROM cluster_members WHERE post_id=$1', [post_id]),
+  cmForUserClusters: (user_id) => db.all('SELECT DISTINCT cluster_id FROM cluster_members WHERE user_id=$1', [user_id]),
+  cmCountForUser: (user_id) => db.get('SELECT COUNT(DISTINCT cluster_id)::int as c FROM cluster_members WHERE user_id=$1', [user_id]),
+
+  /* cluster daily growth */
+  cdIncr: (cluster_id) => db.run(`INSERT INTO cluster_daily(cluster_id,day,new_posts) VALUES($1,CURRENT_DATE,1) ON CONFLICT (cluster_id,day) DO UPDATE SET new_posts=cluster_daily.new_posts+1`, [cluster_id]),
+  cdSeries: (cluster_id, days) => db.all('SELECT day,new_posts FROM cluster_daily WHERE cluster_id=$1 AND day>=CURRENT_DATE-$2::int ORDER BY day ASC', [cluster_id, days]),
+
+  /* ai jobs queue */
+  ajInsert: (id, kind, payload, run_after) => db.run('INSERT INTO ai_jobs(id,kind,payload,run_after) VALUES($1,$2,$3,$4)', [id, kind, JSON.stringify(payload), run_after || Math.floor(Date.now()/1000)]),
+  ajMarkDone: (id) => db.run("UPDATE ai_jobs SET status='done' WHERE id=$1", [id]),
+  ajMarkFailed: (id, error, run_after, attempts) => db.run("UPDATE ai_jobs SET status=$1,last_error=$2,run_after=$3,attempts=$4 WHERE id=$5", [attempts >= 5 ? 'failed' : 'pending', error, run_after, attempts, id]),
+
+  /* stats */
+  stTopReporters: (limit) => db.all(`SELECT u.id,u.username,u.name,u.avatar,u.color,COUNT(DISTINCT cm.cluster_id)::int as cluster_count FROM cluster_members cm JOIN users u ON cm.user_id=u.id GROUP BY u.id ORDER BY cluster_count DESC LIMIT $1`, [limit]),
+  stByCommunity: () => db.all(`SELECT c.slug,c.name,c.color,COUNT(DISTINCT cl.id)::int as active_clusters FROM clusters cl JOIN cluster_members cm ON cm.cluster_id=cl.id JOIN posts p ON cm.post_id=p.id JOIN communities c ON p.community_id=c.id WHERE cl.status='open' GROUP BY c.id ORDER BY active_clusters DESC LIMIT 20`),
+  stSolvedRate: () => db.get(`SELECT COUNT(*) FILTER (WHERE status='solved')::int as solved, COUNT(*)::int as total FROM clusters WHERE member_count>=3`),
+  stTrending: (limit) => db.all(`SELECT c.*,COALESCE((SELECT SUM(new_posts) FROM cluster_daily cd WHERE cd.cluster_id=c.id AND cd.day>=CURRENT_DATE-7),0) as growth_7d FROM clusters c WHERE c.member_count>=3 ORDER BY growth_7d DESC LIMIT $1`, [limit]),
 };
 
 /* ── Seed ── */

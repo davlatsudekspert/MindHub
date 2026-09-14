@@ -20,7 +20,16 @@ ichida g'oya va muammolarini ulashadi, izoh va reaksiya qoldiradi, shaxsiy xabar
 
 ## Env o'zgaruvchilar
 DATABASE_URL, SECRET, PORT, DATA_DIR, APP_URL, RESEND_API_KEY, MAIL_FROM,
-TELEGRAM_BOT_TOKEN, ALLOWED_ORIGINS, AI_PROVIDER, AI_API_KEY
+TELEGRAM_BOT_TOKEN, ALLOWED_ORIGINS, AI_PROVIDER, AI_API_KEY, CF_ACCOUNT_ID,
+AI_EMBED_MODEL, AI_CHAT_MODEL, CLUSTER_THRESHOLD, CLUSTER_MIN_SIZE
+
+## AI Fikr Taqsimlovchi (FAZA 3)
+- src/ai/provider.js — AI_PROVIDER orqali tanlanadigan embed/chat abstraksiyasi.
+  AI_PROVIDER bo'sh bo'lsa butun AI qismi jim o'chadi (feature flag).
+- src/ai/cluster.js — klasterlash algoritmi (cosine similarity, JS asosida —
+  pgvector ishlatilmaydi). src/ai/worker.js — fon ishchi (ai_jobs navbatini
+  FOR UPDATE SKIP LOCKED bilan ishlaydi).
+- Faqat posts.kind IN ('problem','idea') postlari klasterlanadi.
 
 ## Migratsiyalar
 - Schema o'zgarishlari migrations/NNN_nom.sql fayllari orqali (src/migrate.js,

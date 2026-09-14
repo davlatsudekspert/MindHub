@@ -13,6 +13,7 @@ const ws                = require('./src/ws');
 const { verifyToken }   = require('./src/helpers');
 const { corsHeaders, SECURITY_HEADERS } = require('./src/cors');
 const { startCron }     = require('./src/cron');
+const { startAiWorker } = require('./src/ai/worker');
 
 const DATA_DIR = process.env.DATA_DIR || __dirname;
 const PORT     = process.env.PORT || 3000;
@@ -154,6 +155,7 @@ init()
   .then(() => migrate())
   .then(() => {
     startCron();
+    startAiWorker();
     server.listen(PORT, '0.0.0.0', () => {
       console.log(`\n  MindHub  →  http://localhost:${PORT}\n`);
     });

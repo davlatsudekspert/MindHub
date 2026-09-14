@@ -1,5 +1,6 @@
 'use strict';
-const { db } = require('./db');
+const { db, Q } = require('./db');
+const { uid } = require('./helpers');
 
 async function cleanupExpired() {
   try {
@@ -12,10 +13,24 @@ async function cleanupExpired() {
   }
 }
 
+// Haftada bir marta: ai_jobs navbatiga 'recluster' vazifasini qo'yadi
+// (haqiqiy ish src/ai/worker.js orqali bajariladi)
+async function scheduleWeeklyRecluster() {
+  try {
+    const provider = require('./ai/provider');
+    if (!provider.enabled) return;
+    await Q.ajInsert(uid(), 'recluster', {});
+  } catch (e) {
+    console.error('cron scheduleWeeklyRecluster:', e.message);
+  }
+}
+
 function startCron() {
   // Har 10 daqiqada muddati o'tgan kod/tokenlarni tozalash
   cleanupExpired();
   setInterval(cleanupExpired, 10 * 60 * 1000).unref();
+  // Har 7 kunda bir marta klaster birlashtirish vazifasi
+  setInterval(scheduleWeeklyRecluster, 7 * 24 * 60 * 60 * 1000).unref();
   console.log('⏰ Cron: har 10 daqiqada eskirgan kod/tokenlar tozalanadi');
 }
 
