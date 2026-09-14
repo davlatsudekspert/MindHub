@@ -1344,7 +1344,7 @@ async function loadProblemProfile(userId) {
     const p = await API.problemProfile(userId);
     if (!p.total_clusters) return; // hech qanday muammoda qatnashmagan — bo'lim ko'rsatilmaydi
     el.innerHTML = `
-      <div class="post-card" style="margin-bottom:14px">
+      <div class="cluster-card static" style="margin-bottom:14px">
         <div style="font-size:14px;font-weight:700;margin-bottom:10px">🎯 Muammo profili</div>
         <div style="display:flex;gap:24px;margin-bottom:10px">
           <div><div style="font-size:22px;font-weight:800;color:var(--gold);font-family:'Syne',sans-serif">${fmtNum(p.total_clusters)}</div><div style="font-size:11px;color:var(--tx3)">muammo ko'targan</div></div>

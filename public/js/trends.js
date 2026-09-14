@@ -23,15 +23,15 @@ function clusterCardHtml(c) {
   const samples = (c.sample_posts || []).slice(0, 2)
     .map(s => `<div style="font-size:12px;color:var(--tx3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">— ${esc(s.title)}</div>`).join('');
   return `
-    <div class="post-card" style="cursor:pointer" onclick="openCluster('${c.id}')">
+    <div class="cluster-card" style="cursor:pointer" onclick="openCluster('${c.id}')">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:8px">
         <div style="font-size:15px;font-weight:800;font-family:'Syne',sans-serif;line-height:1.3">${esc(c.title)}</div>
         ${clusterStatusBadge(c.status)}
       </div>
       ${c.summary ? `<div style="font-size:13px;color:var(--tx3);margin-bottom:10px">${esc(c.summary)}</div>` : ''}
-      <div style="display:flex;align-items:center;gap:14px;margin-bottom:8px">
-        <div style="font-size:22px;font-weight:800;color:var(--gold);font-family:'Syne',sans-serif">${fmtNum(c.unique_users)}</div>
-        <div style="font-size:12px;color:var(--tx3);line-height:1.3">kishi<br>shu muammoni<br>ko'targan</div>
+      <div style="display:flex;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+        <span style="font-size:26px;font-weight:800;color:var(--gold);font-family:'Syne',sans-serif">${fmtNum(c.unique_users)}</span>
+        <span style="font-size:13px;color:var(--tx3)">kishi shu muammoni ko'targan</span>
         ${growth}
       </div>
       ${samples}
@@ -95,7 +95,7 @@ async function openCluster(id) {
   try {
     const c = await API.cluster(id);
     const postsHtml = (c.posts || []).map(p => `
-      <div class="post-card" style="cursor:pointer;margin-bottom:8px" onclick="goSec('post');openPost('${p.post_id}')">
+      <div class="cluster-card" style="cursor:pointer;margin-bottom:8px" onclick="goSec('post');openPost('${p.post_id}')">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
           <div class="av" style="${avStyle({color:p.color},22)};border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0">${avHtml({avatar:p.avatar,name:p.username},22,9)}</div>
           <div style="font-size:12px;color:var(--tx3)">${esc(p.username)}</div>
@@ -115,7 +115,7 @@ async function openCluster(id) {
       <button id="cl-join-btn" class="btn ${c.joined ? 'btn-outline' : 'btn-gold'}" style="margin-bottom:18px" onclick="joinClusterNoPost('${c.id}')" ${c.joined ? 'disabled' : ''}>
         ${c.joined ? "✓ Siz ham shu muammoni ko'targansiz" : "Menda ham shu muammo bor"}
       </button>
-      <div class="post-card" style="margin-bottom:16px">
+      <div class="cluster-card static" style="margin-bottom:16px">
         <div style="font-size:12px;font-weight:700;color:var(--tx3);margin-bottom:8px">Kunlik o'sish</div>
         ${svgGrowthChart(c.daily_growth)}
       </div>
