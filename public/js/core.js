@@ -145,6 +145,7 @@ const API = {
   /* FAZA 3: AI klasterlar */
   clusters:  (sort,cursor)  => api('GET',`/clusters?sort=${sort||'hot'}&cursor=${cursor||0}`),
   cluster:   (id,offset)    => api('GET',`/clusters/${id}?offset=${offset||0}`),
+  joinCluster:(id)          => api('POST',`/clusters/${id}/join`),
   aiSimilar: (title,body)   => api('POST','/ai/similar',{title,body}),
   statsProblems: ()         => api('GET','/stats/problems'),
   problemProfile:(userId)   => api('GET',`/users/${userId}/problem-profile`),

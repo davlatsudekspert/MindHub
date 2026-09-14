@@ -1039,6 +1039,7 @@ async function route(req, res) {
     return json(res, { clusters: out, next_cursor: cursor + rows.length });
   }
   if (p.match(/^\/api\/clusters\/[^/]+$/) && m === 'GET') {
+    const u2 = await getAuth(req);
     const cid = p.split('/')[3];
     const cluster = await Q.clById(cid);
     if (!cluster) return json(res, { error: 'Topilmadi' }, 404);
@@ -1046,14 +1047,27 @@ async function route(req, res) {
     const offset = Math.max(parseInt(q.offset) || 0, 0);
     const members = await Q.clmByCluster(cid, limit, offset);
     const daily = await Q.cdSeries(cid, 30);
+    const joined = u2 ? !!(await Q.clmJoinWithoutPost(cid, u2)) : false;
     return json(res, {
       ...cluster,
+      joined,
       posts: members.map(m => ({
         post_id: m.post_id, title: m.title, username: m.username, avatar: m.avatar, color: m.color,
         similarity: m.similarity, joined_at: m.joined_at, created_at: m.post_created_at,
       })),
       daily_growth: daily,
     });
+  }
+  if (p.match(/^\/api\/clusters\/[^/]+\/join$/) && m === 'POST') {
+    const u2 = await getAuthNotBanned(req, res); if (!u2) return true;
+    const cid = p.split('/')[3];
+    const cluster = await Q.clById(cid); if (!cluster) return json(res, { error: 'Topilmadi' }, 404);
+    const existing = await Q.clmJoinWithoutPost(cid, u2);
+    if (existing) return json(res, { joined: true, already: true, unique_users: cluster.unique_users });
+    await Q.clmInsert(cid, null, u2, 1);
+    const uniqueUsers = (await Q.clmUniqueUsers(cid)).c;
+    await Q.clBumpUniqueUsers(cid, uniqueUsers);
+    return json(res, { joined: true, unique_users: uniqueUsers });
   }
   if (p === '/api/ai/similar' && m === 'POST') {
     const u2 = await getAuthNotBanned(req, res); if (!u2) return true;

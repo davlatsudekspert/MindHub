@@ -108,10 +108,13 @@ async function openCluster(id) {
         ${clusterStatusBadge(c.status)}
       </div>
       ${c.summary ? `<div style="font-size:14px;color:var(--tx3);margin-bottom:16px">${esc(c.summary)}</div>` : ''}
-      <div style="display:flex;gap:24px;margin-bottom:18px">
+      <div style="display:flex;gap:24px;margin-bottom:14px">
         <div><div style="font-size:24px;font-weight:800;color:var(--gold);font-family:'Syne',sans-serif">${fmtNum(c.unique_users)}</div><div style="font-size:11px;color:var(--tx3)">kishi ko'targan</div></div>
         <div><div style="font-size:24px;font-weight:800;font-family:'Syne',sans-serif">${fmtNum(c.member_count)}</div><div style="font-size:11px;color:var(--tx3)">post</div></div>
       </div>
+      <button id="cl-join-btn" class="btn ${c.joined ? 'btn-outline' : 'btn-gold'}" style="margin-bottom:18px" onclick="joinClusterNoPost('${c.id}')" ${c.joined ? 'disabled' : ''}>
+        ${c.joined ? "✓ Siz ham shu muammoni ko'targansiz" : "Menda ham shu muammo bor"}
+      </button>
       <div class="post-card" style="margin-bottom:16px">
         <div style="font-size:12px;font-weight:700;color:var(--tx3);margin-bottom:8px">Kunlik o'sish</div>
         ${svgGrowthChart(c.daily_growth)}
@@ -124,6 +127,17 @@ async function openCluster(id) {
   }
 }
 
+async function joinClusterNoPost(id) {
+  if (!requireAuth()) return;
+  try {
+    const d = await API.joinCluster(id);
+    toast(d.already ? "Siz allaqachon qo'shilgansiz" : "Qo'shildingiz! Endi siz ham bu muammoni ko'targansiz");
+    const btn = document.getElementById('cl-join-btn');
+    if (btn) { btn.disabled = true; btn.className = 'btn btn-outline'; btn.textContent = "✓ Siz ham shu muammoni ko'targansiz"; }
+  } catch (e) { toast(e.message); }
+}
+
 window.setTrendsSort = setTrendsSort;
 window.loadClusters = loadClusters;
 window.openCluster = openCluster;
+window.joinClusterNoPost = joinClusterNoPost;

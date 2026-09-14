@@ -450,7 +450,16 @@ const Q = {
   clListUnsolved: (minSize, limit, offset) => db.all("SELECT * FROM clusters WHERE member_count>=$1 AND status='open' ORDER BY member_count DESC LIMIT $2 OFFSET $3", [minSize, limit, offset]),
 
   /* cluster members — "clm" prefix (comments allaqachon "cm" prefiksini band qilgan, chalkashmaslik uchun) */
-  clmInsert: (cluster_id, post_id, user_id, similarity) => db.run('INSERT INTO cluster_members(cluster_id,post_id,user_id,similarity) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING', [cluster_id, post_id, user_id, similarity]),
+  // post_id null bo'lishi mumkin — "Menda ham shu muammo bor" (postsiz a'zolik).
+  // id: post bilan qo'shilganda deterministik (cluster_id:post_id) — takroriy
+  // embed urinishlarida ON CONFLICT bilan xavfsiz; postsiz qo'shilganda tasodifiy —
+  // (cluster_id,user_id) WHERE post_id IS NULL qisman indeksi dublikatni to'sadi.
+  clmInsert: (cluster_id, post_id, user_id, similarity) => {
+    const id = post_id ? `${cluster_id}:${post_id}` : `${cluster_id}:u:${user_id}:${crypto.randomUUID()}`;
+    return db.run('INSERT INTO cluster_members(id,cluster_id,post_id,user_id,similarity) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING', [id, cluster_id, post_id, user_id, similarity]);
+  },
+  clmJoinWithoutPost: (cluster_id, user_id) => db.get('SELECT 1 FROM cluster_members WHERE cluster_id=$1 AND user_id=$2 AND post_id IS NULL', [cluster_id, user_id]),
+  clBumpUniqueUsers: (id, uniqueUsers) => db.run('UPDATE clusters SET unique_users=$1,last_activity_at=extract(epoch from now())::int WHERE id=$2', [uniqueUsers, id]),
   clmByCluster: (cluster_id, limit, offset) => db.all('SELECT cm.*,p.title,p.created_at as post_created_at,u.username,u.avatar,u.color FROM cluster_members cm JOIN posts p ON cm.post_id=p.id JOIN users u ON cm.user_id=u.id WHERE cm.cluster_id=$1 ORDER BY cm.joined_at DESC LIMIT $2 OFFSET $3', [cluster_id, limit, offset]),
   clmUniqueUsers: (cluster_id) => db.get('SELECT COUNT(DISTINCT user_id)::int as c FROM cluster_members WHERE cluster_id=$1', [cluster_id]),
   clmSamplePosts: (cluster_id, limit) => db.all('SELECT p.id,p.title,p.created_at,u.username FROM cluster_members cm JOIN posts p ON cm.post_id=p.id JOIN users u ON p.user_id=u.id WHERE cm.cluster_id=$1 ORDER BY cm.joined_at DESC LIMIT $2', [cluster_id, limit]),
