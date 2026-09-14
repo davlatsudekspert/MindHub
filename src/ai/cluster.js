@@ -40,18 +40,18 @@ async function processEmbedJob(postId) {
   let clusterId;
   if (best && bestSim >= CLUSTER_THRESHOLD) {
     clusterId = best.id;
-    await Q.cmInsert(clusterId, postId, post.user_id, bestSim);
+    await Q.clmInsert(clusterId, postId, post.user_id, bestSim);
     // Markazni yangilash: to'liq qayta hisoblash o'rniga vaznli o'rtacha
     // (barcha a'zolar embeddinglarini qayta o'qish qimmat bo'lgani uchun)
     const oldCentroid = parseVec(best.centroid);
     const n = best.member_count;
     const newCentroid = oldCentroid.map((v, i) => (v*n + embedding[i]) / (n + 1));
-    const uniqueUsers = (await Q.cmUniqueUsers(clusterId)).c;
+    const uniqueUsers = (await Q.clmUniqueUsers(clusterId)).c;
     await Q.clUpdateAfterJoin(clusterId, newCentroid, n + 1, uniqueUsers);
   } else {
     clusterId = uid();
     await Q.clInsert(clusterId, post.title.slice(0, 120), '', embedding, post.kind);
-    await Q.cmInsert(clusterId, postId, post.user_id, 1);
+    await Q.clmInsert(clusterId, postId, post.user_id, 1);
   }
 
   await Q.cdIncr(clusterId);
@@ -69,7 +69,7 @@ async function processEmbedJob(postId) {
 
 // LLM yordamida klaster uchun o'zbekcha sarlavha va qisqa xulosa yozadi
 async function processSummarizeJob(clusterId) {
-  const posts = await Q.cmSamplePosts(clusterId, 10);
+  const posts = await Q.clmSamplePosts(clusterId, 10);
   if (!posts.length) return;
   const titles = posts.map(p => `- ${p.title}`).join('\n');
   const system = "Siz o'zbek tilida yozadigan yordamchisiz. Foydalanuvchilar ko'targan o'xshash " +
@@ -114,7 +114,7 @@ async function processReclusterJob() {
       await db.run('DELETE FROM cluster_daily WHERE cluster_id=$1', [dropId]);
       await db.run('DELETE FROM clusters WHERE id=$1', [dropId]);
       const memberCount = (await db.get('SELECT COUNT(*)::int as c FROM cluster_members WHERE cluster_id=$1', [keepId])).c;
-      const uniqueUsers = (await Q.cmUniqueUsers(keepId)).c;
+      const uniqueUsers = (await Q.clmUniqueUsers(keepId)).c;
       await Q.clUpdateAfterJoin(keepId, ci, memberCount, uniqueUsers);
       merged.add(dropId);
     }

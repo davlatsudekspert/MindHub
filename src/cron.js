@@ -8,6 +8,8 @@ async function cleanupExpired() {
     await db.run("DELETE FROM reset_tokens WHERE expires_at<extract(epoch from now())::int OR used=1");
     await db.run("DELETE FROM verify_codes WHERE expires_at<extract(epoch from now())::int OR used=1");
     await db.run("DELETE FROM tg_codes WHERE expires_at<extract(epoch from now())::int OR used=1");
+    // Ekspert takliflari 7 kun ichida javobsiz qolsa — muddati tugagan deb belgilash
+    await Q.eiExpireOld();
   } catch (e) {
     console.error('cron cleanupExpired:', e.message);
   }

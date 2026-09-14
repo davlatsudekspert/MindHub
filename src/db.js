@@ -308,7 +308,7 @@ const Q = {
   svDelete: (user_id, post_id) => db.run('DELETE FROM saved_posts WHERE user_id=$1 AND post_id=$2', [user_id, post_id]),
 
   /* comments */
-  cmByPost: (post_id) => db.all('SELECT cm.*,u.username,u.color,u.avatar FROM comments cm JOIN users u ON cm.user_id=u.id WHERE cm.post_id=$1 ORDER BY cm.score DESC,cm.created_at ASC', [post_id]),
+  cmByPost: (post_id) => db.all('SELECT cm.*,u.username,u.color,u.avatar FROM comments cm JOIN users u ON cm.user_id=u.id WHERE cm.post_id=$1 ORDER BY cm.is_solution DESC,cm.score DESC,cm.created_at ASC', [post_id]),
   cmInsert: (id, post_id, user_id, parent_id, body, depth) => db.run('INSERT INTO comments(id,post_id,user_id,parent_id,body,depth) VALUES($1,$2,$3,$4,$5,$6)', [id, post_id, user_id, parent_id, body, depth]),
   cmOne:    (id) => db.get('SELECT cm.*,u.username,u.color,u.avatar FROM comments cm JOIN users u ON cm.user_id=u.id WHERE cm.id=$1', [id]),
   cmOwner:  (id) => db.get('SELECT user_id,post_id FROM comments WHERE id=$1', [id]),
@@ -449,14 +449,14 @@ const Q = {
   clListSize: (minSize, limit, offset) => db.all('SELECT * FROM clusters WHERE member_count>=$1 ORDER BY member_count DESC LIMIT $2 OFFSET $3', [minSize, limit, offset]),
   clListUnsolved: (minSize, limit, offset) => db.all("SELECT * FROM clusters WHERE member_count>=$1 AND status='open' ORDER BY member_count DESC LIMIT $2 OFFSET $3", [minSize, limit, offset]),
 
-  /* cluster members */
-  cmInsert: (cluster_id, post_id, user_id, similarity) => db.run('INSERT INTO cluster_members(cluster_id,post_id,user_id,similarity) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING', [cluster_id, post_id, user_id, similarity]),
-  cmByCluster: (cluster_id, limit, offset) => db.all('SELECT cm.*,p.title,p.created_at as post_created_at,u.username,u.avatar,u.color FROM cluster_members cm JOIN posts p ON cm.post_id=p.id JOIN users u ON cm.user_id=u.id WHERE cm.cluster_id=$1 ORDER BY cm.joined_at DESC LIMIT $2 OFFSET $3', [cluster_id, limit, offset]),
-  cmUniqueUsers: (cluster_id) => db.get('SELECT COUNT(DISTINCT user_id)::int as c FROM cluster_members WHERE cluster_id=$1', [cluster_id]),
-  cmSamplePosts: (cluster_id, limit) => db.all('SELECT p.id,p.title,p.created_at,u.username FROM cluster_members cm JOIN posts p ON cm.post_id=p.id JOIN users u ON p.user_id=u.id WHERE cm.cluster_id=$1 ORDER BY cm.joined_at DESC LIMIT $2', [cluster_id, limit]),
-  cmByPostId: (post_id) => db.get('SELECT * FROM cluster_members WHERE post_id=$1', [post_id]),
-  cmForUserClusters: (user_id) => db.all('SELECT DISTINCT cluster_id FROM cluster_members WHERE user_id=$1', [user_id]),
-  cmCountForUser: (user_id) => db.get('SELECT COUNT(DISTINCT cluster_id)::int as c FROM cluster_members WHERE user_id=$1', [user_id]),
+  /* cluster members — "clm" prefix (comments allaqachon "cm" prefiksini band qilgan, chalkashmaslik uchun) */
+  clmInsert: (cluster_id, post_id, user_id, similarity) => db.run('INSERT INTO cluster_members(cluster_id,post_id,user_id,similarity) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING', [cluster_id, post_id, user_id, similarity]),
+  clmByCluster: (cluster_id, limit, offset) => db.all('SELECT cm.*,p.title,p.created_at as post_created_at,u.username,u.avatar,u.color FROM cluster_members cm JOIN posts p ON cm.post_id=p.id JOIN users u ON cm.user_id=u.id WHERE cm.cluster_id=$1 ORDER BY cm.joined_at DESC LIMIT $2 OFFSET $3', [cluster_id, limit, offset]),
+  clmUniqueUsers: (cluster_id) => db.get('SELECT COUNT(DISTINCT user_id)::int as c FROM cluster_members WHERE cluster_id=$1', [cluster_id]),
+  clmSamplePosts: (cluster_id, limit) => db.all('SELECT p.id,p.title,p.created_at,u.username FROM cluster_members cm JOIN posts p ON cm.post_id=p.id JOIN users u ON p.user_id=u.id WHERE cm.cluster_id=$1 ORDER BY cm.joined_at DESC LIMIT $2', [cluster_id, limit]),
+  clmByPostId: (post_id) => db.get('SELECT * FROM cluster_members WHERE post_id=$1', [post_id]),
+  clmForUserClusters: (user_id) => db.all('SELECT DISTINCT cluster_id FROM cluster_members WHERE user_id=$1', [user_id]),
+  clmCountForUser: (user_id) => db.get('SELECT COUNT(DISTINCT cluster_id)::int as c FROM cluster_members WHERE user_id=$1', [user_id]),
 
   /* cluster daily growth */
   cdIncr: (cluster_id) => db.run(`INSERT INTO cluster_daily(cluster_id,day,new_posts) VALUES($1,CURRENT_DATE,1) ON CONFLICT (cluster_id,day) DO UPDATE SET new_posts=cluster_daily.new_posts+1`, [cluster_id]),
@@ -472,6 +472,43 @@ const Q = {
   stByCommunity: () => db.all(`SELECT c.slug,c.name,c.color,COUNT(DISTINCT cl.id)::int as active_clusters FROM clusters cl JOIN cluster_members cm ON cm.cluster_id=cl.id JOIN posts p ON cm.post_id=p.id JOIN communities c ON p.community_id=c.id WHERE cl.status='open' GROUP BY c.id ORDER BY active_clusters DESC LIMIT 20`),
   stSolvedRate: () => db.get(`SELECT COUNT(*) FILTER (WHERE status='solved')::int as solved, COUNT(*)::int as total FROM clusters WHERE member_count>=3`),
   stTrending: (limit) => db.all(`SELECT c.*,COALESCE((SELECT SUM(new_posts) FROM cluster_daily cd WHERE cd.cluster_id=c.id AND cd.day>=CURRENT_DATE-7),0) as growth_7d FROM clusters c WHERE c.member_count>=3 ORDER BY growth_7d DESC LIMIT $1`, [limit]),
+
+  /* ══ FAZA 4: Yechim va taqsimot ══ */
+  /* solutions */
+  slInsert:     (id, post_id, comment_id, cluster_id, solver_id, marked_by) => db.run('INSERT INTO solutions(id,post_id,comment_id,cluster_id,solver_id,marked_by) VALUES($1,$2,$3,$4,$5,$6)', [id, post_id, comment_id, cluster_id, solver_id, marked_by]),
+  slByComment:  (comment_id) => db.get('SELECT * FROM solutions WHERE comment_id=$1', [comment_id]),
+  slDeleteByComment: (comment_id) => db.run('DELETE FROM solutions WHERE comment_id=$1', [comment_id]),
+  slCountForCluster: (cluster_id) => db.get('SELECT COUNT(DISTINCT post_id)::int as c FROM solutions WHERE cluster_id=$1', [cluster_id]),
+
+  /* posts/comments status */
+  pSetStatus: (post_id, status) => db.run('UPDATE posts SET status=$1 WHERE id=$2', [status, post_id]),
+  cmSetSolution: (comment_id, val) => db.run('UPDATE comments SET is_solution=$1 WHERE id=$2', [val, comment_id]),
+  cmSolutionForPost: (post_id) => db.get('SELECT cm.*,u.username,u.color,u.avatar FROM comments cm JOIN users u ON cm.user_id=u.id WHERE cm.post_id=$1 AND cm.is_solution=1 LIMIT 1', [post_id]),
+
+  /* expert topics */
+  etUpsertScore: (user_id, cluster_id, delta) => db.run('INSERT INTO expert_topics(user_id,cluster_id,score) VALUES($1,$2,$3) ON CONFLICT (user_id,cluster_id) DO UPDATE SET score=expert_topics.score+$3,updated_at=extract(epoch from now())::int', [user_id, cluster_id, delta]),
+  etTopForClusters: (clusterIds, excludeUserId, limit) => db.all('SELECT user_id,SUM(score)::real as total_score FROM expert_topics WHERE cluster_id = ANY($1::text[]) AND user_id!=$2 GROUP BY user_id ORDER BY total_score DESC LIMIT $3', [clusterIds, excludeUserId, limit]),
+  etByUser: (user_id, limit) => db.all('SELECT et.*,c.title as cluster_title FROM expert_topics et JOIN clusters c ON et.cluster_id=c.id WHERE et.user_id=$1 ORDER BY et.score DESC LIMIT $2', [user_id, limit]),
+
+  /* expert invites */
+  eiInsert:  (id, user_id, cluster_id, post_id) => db.run('INSERT INTO expert_invites(id,user_id,cluster_id,post_id) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING', [id, user_id, cluster_id, post_id]),
+  eiExists:  (user_id, post_id) => db.get('SELECT 1 FROM expert_invites WHERE user_id=$1 AND post_id=$2', [user_id, post_id]),
+  eiCountForUserSince: (user_id, sinceTs) => db.get('SELECT COUNT(*)::int as c FROM expert_invites WHERE user_id=$1 AND created_at>=$2', [user_id, sinceTs]),
+  eiCountForPost: (post_id) => db.get('SELECT COUNT(*)::int as c FROM expert_invites WHERE post_id=$1', [post_id]),
+  eiLastNForUser: (user_id, n) => db.all('SELECT status FROM expert_invites WHERE user_id=$1 ORDER BY created_at DESC LIMIT $2', [user_id, n]),
+  eiMarkAnswered: (user_id, post_id) => db.run("UPDATE expert_invites SET status='answered' WHERE user_id=$1 AND post_id=$2 AND status='sent'", [user_id, post_id]),
+  eiExpireOld: () => db.run("UPDATE expert_invites SET status='expired' WHERE status='sent' AND created_at<extract(epoch from now())::int-7*86400"),
+
+  /* notification preferences */
+  npGet: (user_id) => db.get('SELECT * FROM notif_prefs WHERE user_id=$1', [user_id]),
+  npEnsure: (user_id) => db.run('INSERT INTO notif_prefs(user_id) VALUES($1) ON CONFLICT DO NOTHING', [user_id]),
+  npSet: (user_id, field, value) => {
+    // field foydalanuvchidan kelishi mumkin — SQL in'ektsiyasining oldini olish
+    // uchun faqat ruxsat etilgan ustun nomlari qabul qilinadi
+    const ALLOWED = ['expert_invite', 'cluster_match', 'solution_found', 'email_digest'];
+    if (!ALLOWED.includes(field)) throw new Error(`Notif pref: yaroqsiz maydon '${field}'`);
+    return db.run(`UPDATE notif_prefs SET ${field}=$1 WHERE user_id=$2`, [value, user_id]);
+  },
 };
 
 /* ── Seed ── */

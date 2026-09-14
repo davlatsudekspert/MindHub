@@ -215,7 +215,7 @@ async function fmtPost(p, uid2) {
   let clusterInfo = { cluster_id: null, cluster_title: null, cluster_size: null };
   if (p.kind === 'problem' || p.kind === 'idea') {
     try {
-      const cm = await Q.cmByPostId(p.id);
+      const cm = await Q.clmByPostId(p.id);
       if (cm) {
         const cl = await Q.clById(cm.cluster_id);
         if (cl) clusterInfo = { cluster_id: cl.id, cluster_title: cl.title, cluster_size: cl.member_count };
@@ -567,6 +567,21 @@ async function route(req, res) {
     const b = await readBody(req);
     if (b.token) await Q.pushDel(u2, b.token);
     return json(res, { ok: true });
+  }
+  if (p === '/api/me/notif-prefs' && m === 'GET') {
+    const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
+    await Q.npEnsure(u2);
+    return json(res, await Q.npGet(u2));
+  }
+  if (p === '/api/me/notif-prefs' && m === 'PUT') {
+    const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
+    const b = await readBody(req);
+    await Q.npEnsure(u2);
+    const FIELDS = ['expert_invite', 'cluster_match', 'solution_found', 'email_digest'];
+    for (const f of FIELDS) {
+      if (b[f] !== undefined) await Q.npSet(u2, f, b[f] ? 1 : 0);
+    }
+    return json(res, await Q.npGet(u2));
   }
 
   /* ══ USERS ══ */
@@ -1012,7 +1027,7 @@ async function route(req, res) {
     else rows = await Q.clListRanked(CLUSTER_MIN_SIZE, limit, cursor);
     const out = [];
     for (const c of rows) {
-      const samples = await Q.cmSamplePosts(c.id, 3);
+      const samples = await Q.clmSamplePosts(c.id, 3);
       out.push({
         id: c.id, title: c.title, summary: c.summary, status: c.status, kind: c.kind,
         member_count: c.member_count, unique_users: c.unique_users,
@@ -1029,7 +1044,7 @@ async function route(req, res) {
     if (!cluster) return json(res, { error: 'Topilmadi' }, 404);
     const limit = Math.min(parseInt(q.limit) || 20, 50);
     const offset = Math.max(parseInt(q.offset) || 0, 0);
-    const members = await Q.cmByCluster(cid, limit, offset);
+    const members = await Q.clmByCluster(cid, limit, offset);
     const daily = await Q.cdSeries(cid, 30);
     return json(res, {
       ...cluster,
@@ -1065,7 +1080,7 @@ async function route(req, res) {
       const out = [];
       for (const { c, sim } of scored) {
         const full = await Q.clById(c.id);
-        const samples = await Q.cmSamplePosts(c.id, 3);
+        const samples = await Q.clmSamplePosts(c.id, 3);
         out.push({
           id: c.id, title: full.title, member_count: full.member_count,
           similarity: Math.round(sim * 100) / 100,
@@ -1094,7 +1109,7 @@ async function route(req, res) {
   }
   if (p.match(/^\/api\/users\/[^/]+\/problem-profile$/) && m === 'GET') {
     const targetId = p.split('/')[3];
-    const clusterIds = await Q.cmForUserClusters(targetId);
+    const clusterIds = await Q.clmForUserClusters(targetId);
     const total = clusterIds.length;
     let solved = 0;
     const clustersOut = [];
@@ -1124,6 +1139,8 @@ async function route(req, res) {
     await Q.cmInsert(cid, pid, u2, parentId, body, depth);
     await Q.pIncCmt(pid);
     await Q.uKarma(1, u2);
+    // Agar bu foydalanuvchi ekspert sifatida shu postga taklif olgan bo'lsa — javob berdi deb belgilash
+    try { await Q.eiMarkAnswered(u2, pid); } catch (e) { console.error('eiMarkAnswered:', e.message); }
     const comment = await fmtCmt(await Q.cmOne(cid), u2);
     ws.sendAll({ type: 'new_comment', data: { postId: pid, comment } });
     const from = await Q.uById(u2);
@@ -1158,7 +1175,76 @@ async function route(req, res) {
     const c     = await Q.cvCount(cid);
     const score = c.up - c.dn;
     await Q.cmScore(score, cid);
+    // Izoh 10+ upvote olganda, muallif shu klaster bo'yicha ekspert ball oladi
+    if (score === 10 && myVote === 1) {
+      try {
+        const cm = await Q.clmByPostId(own.post_id);
+        if (cm) await Q.etUpsertScore(own.user_id, cm.cluster_id, 5);
+      } catch (e) { console.error('expert score (comment vote):', e.message); }
+    }
     return json(res, { score, my_vote: myVote });
+  }
+  if (p.match(/^\/api\/comments\/[^/]+\/solution$/) && m === 'POST') {
+    const u2 = await getAuthNotBanned(req, res); if (!u2) return true;
+    const cid = p.split('/')[3];
+    const comment = await Q.cmOwner(cid); if (!comment) return json(res, { error: 'Topilmadi' }, 404);
+    const post = await Q.pOwner(comment.post_id); if (!post) return json(res, { error: 'Post topilmadi' }, 404);
+    const canManage = post.user_id === u2 || await Q.comCanManage(u2, post.community_id);
+    if (!canManage) return json(res, { error: "Ruxsat yo'q" }, 403);
+    if (await Q.slByComment(cid)) return json(res, { error: 'Bu izoh allaqachon yechim deb belgilangan' }, 400);
+
+    const fullComment = await Q.cmOne(cid);
+    const cm = await Q.clmByPostId(comment.post_id);
+    const clusterId = cm ? cm.cluster_id : null;
+
+    const solId = uid();
+    await Q.slInsert(solId, comment.post_id, cid, clusterId, fullComment.user_id, u2);
+    await Q.cmSetSolution(cid, 1);
+    await Q.pSetStatus(comment.post_id, 'solved');
+    await Q.uKarma(25, fullComment.user_id);
+
+    const nid = uid();
+    const solMsg = 'Sizning javobingiz yechim deb belgilandi';
+    await Q.nInsert(nid, fullComment.user_id, u2, 'solution_found', comment.post_id, cid, solMsg);
+    ws.sendTo(fullComment.user_id, { type: 'notif', data: { id: nid, type: 'solution_found', post_id: comment.post_id, msg: solMsg, is_read: 0, ago: 'Hozir' } });
+
+    if (clusterId) {
+      await Q.etUpsertScore(fullComment.user_id, clusterId, 10);
+      const cluster = await Q.clById(clusterId);
+      const solvedCount = (await Q.slCountForCluster(clusterId)).c;
+      if (cluster && cluster.member_count > 0 && solvedCount / cluster.member_count >= 0.3 && cluster.status !== 'solved') {
+        await Q.clSetStatus(clusterId, 'solved');
+        const members = await Q.clmByCluster(clusterId, 500, 0);
+        const notified = new Set([fullComment.user_id]);
+        for (const mem of members) {
+          if (notified.has(mem.user_id)) continue;
+          notified.add(mem.user_id);
+          await Q.npEnsure(mem.user_id);
+          const prefs = await Q.npGet(mem.user_id);
+          if (prefs && prefs.solution_found === 0) continue;
+          const nid2 = uid();
+          const msg2 = "Siz ko'targan muammoga o'xshash savolga yechim topildi";
+          await Q.nInsert(nid2, mem.user_id, u2, 'solution_found', comment.post_id, cid, msg2);
+          ws.sendTo(mem.user_id, { type: 'notif', data: { id: nid2, type: 'solution_found', post_id: comment.post_id, msg: msg2, is_read: 0, ago: 'Hozir' } });
+        }
+      }
+    }
+    return json(res, { ok: true });
+  }
+  if (p.match(/^\/api\/comments\/[^/]+\/solution$/) && m === 'DELETE') {
+    const u2 = await getAuthNotBanned(req, res); if (!u2) return true;
+    const cid = p.split('/')[3];
+    const comment = await Q.cmOwner(cid); if (!comment) return json(res, { error: 'Topilmadi' }, 404);
+    const post = await Q.pOwner(comment.post_id); if (!post) return json(res, { error: 'Post topilmadi' }, 404);
+    const canManage = post.user_id === u2 || await Q.comCanManage(u2, post.community_id);
+    if (!canManage) return json(res, { error: "Ruxsat yo'q" }, 403);
+    const existing = await Q.slByComment(cid);
+    if (!existing) return json(res, { error: 'Yechim belgilanmagan' }, 400);
+    await Q.slDeleteByComment(cid);
+    await Q.cmSetSolution(cid, 0);
+    await Q.pSetStatus(comment.post_id, 'open');
+    await Q.uKarma(-25, existing.solver_id);
+    return json(res, { ok: true });
   }
   if (p.match(/^\/api\/comments\/[^/]+$/) && m === 'DELETE') {
     const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);

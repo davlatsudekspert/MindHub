@@ -48,3 +48,17 @@ AI_EMBED_MODEL, AI_CHAT_MODEL, CLUSTER_THRESHOLD, CLUSTER_MIN_SIZE
   konsolga chiqadi (lokal test uchun). nodemailer ishlatilmaydi.
 - Ro'yxatdan o'tish 2 bosqichli: /api/auth/register pending holat qaytaradi,
   /api/auth/verify-email kod bilan tasdiqlaydi va to'liq token beradi.
+
+## Nomlash: cluster_members vs comments
+- Q obyektida comments jadvali uchun qisqartma "cm" (cmInsert, cmByPost, ...)
+  band qilingan. cluster_members jadvali uchun "clm" prefiksi ishlatiladi
+  (clmInsert, clmByCluster, ...) — ikkalasini aralashtirib yubormaslik uchun
+  ATAYLAB har xil. Yangi Q funksiyasi qo'shishdan oldin nom band emasligini
+  tekshir (bitta marta shu sababdan production xatosi bo'lgan).
+
+## Yechim va ekspert taqsimlash (FAZA 4)
+- Post egasi yoki jamoa admini POST/DELETE /api/comments/:id/solution orqali
+  izohni yechim deb belgilaydi (posts.status, comments.is_solution).
+- src/ai/distribute.js — klasterga yaqin mavzularda faol foydalanuvchilarga
+  taklif yuboradi (kuniga 3ta/user, postiga 5ta chegarasi bilan).
+  src/ai/worker.js ai_jobs('distribute') orqali chaqiradi.
