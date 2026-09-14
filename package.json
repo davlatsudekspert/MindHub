@@ -1,0 +1,16 @@
+{
+  "name": "mindhub",
+  "version": "1.0.0",
+  "description": "MindHub - O'zbek Reddit",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "nodemailer": "^9.0.5",
+    "pg": "^8.13.1"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

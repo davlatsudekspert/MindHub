@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="uz" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>MindHub</title>
+<meta name="theme-color" content="#C8922A">
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="apple-touch-icon" href="/icons/launchericon-192x192.png">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+<link rel="manifest" href="manifest.json">
+</head>
+<body>
+
+<!-- AUTH MODAL -->
+<div id="auth-modal" class="overlay">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-hd"><div class="modal-title">💡 MindHub</div></div>
+    <div style="display:flex;gap:4px;margin-bottom:18px;background:var(--bg2);border-radius:var(--r);padding:3px">
+      <button class="auth-tab active" data-t="login" onclick="switchAmTab('login')" style="flex:1;padding:7px;border-radius:6px;font-size:13px;font-weight:700;border:none;cursor:pointer;background:none;color:inherit;transition:all .15s">Kirish</button>
+      <button class="auth-tab" data-t="register" onclick="switchAmTab('register')" style="flex:1;padding:7px;border-radius:6px;font-size:13px;font-weight:700;border:none;cursor:pointer;background:none;color:inherit;transition:all .15s">Ro'yxat</button>
+    </div>
+    <div id="am-err" class="auth-err"></div>
+    <div id="am-login-form">
+      <div class="form-row"><input class="inp" id="am-uname" placeholder="Username / Email" autocomplete="username"></div>
+      <div class="form-row"><input class="inp" id="am-pass" placeholder="Parol" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doAmLogin()"></div>
+      <button class="btn btn-gold" style="width:100%" id="am-login-btn" onclick="doAmLogin()">Kirish</button>
+    </div>
+    <div id="am-tg-profile-form" style="display:none">
+      <div style="text-align:center;margin-bottom:16px">
+        <div style="font-size:32px;margin-bottom:8px">👋</div>
+        <div style="font-size:14px;font-weight:600">Xush kelibsiz!</div>
+        <div style="font-size:12px;color:var(--tx3);margin-top:4px">Ma'lumotlaringizni to'ldiring</div>
+      </div>
+      <div id="am-tg-err" class="auth-err"></div>
+      <div class="form-row"><label class="form-lbl">Ism Familiya</label><input class="inp" id="am-tg-name" placeholder="Ismingiz"></div>
+      <div class="form-row"><label class="form-lbl">Username</label><input class="inp" id="am-tg-user" placeholder="username (lotin, raqam, _)"></div>
+      <button class="btn btn-gold" style="width:100%" id="am-tg-btn" onclick="finishTgReg()">Davom etish</button>
+    </div>
+    <div id="am-reg-form" style="display:none">
+      <div class="form-row"><input class="inp" id="am-reg-name" placeholder="Ismingiz"></div>
+      <div class="form-row"><input class="inp" id="am-reg-user" placeholder="Username (lotin, raqam, _)"></div>
+      <div class="form-row"><input class="inp" id="am-reg-email" placeholder="Email" type="email"></div>
+      <div class="form-row"><input class="inp" id="am-reg-pass" placeholder="Parol (6+ belgi)" type="password" onkeydown="if(event.key==='Enter')doAmReg()"></div>
+      <button class="btn btn-gold" style="width:100%" id="am-reg-btn" onclick="doAmReg()">Ro'yxatdan o'tish</button>
+    </div>
+    <div id="am-forgot-form" style="display:none">
+      <div id="fg-step1">
+        <div style="font-size:13px;color:var(--tx3);margin-bottom:12px;text-align:center">Telegram orqali kirish</div>
+        <div id="tg-forgot-container" style="display:flex;justify-content:center"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- RESET PASSWORD -->
+<div id="reset-modal" class="overlay">
+  <div class="modal" style="max-width:380px">
+    <div id="reset-checking" style="text-align:center;padding:20px 0"><div class="spin" style="margin:0 auto 12px"></div><div style="color:var(--tx3)">Tekshirilmoqda...</div></div>
+    <div id="reset-form" style="display:none">
+      <div class="modal-hd"><div class="modal-title">Yangi parol</div></div>
+      <div style="font-size:13px;color:var(--tx3);margin-bottom:14px">Hisob: <strong id="reset-uname-label"></strong></div>
+      <div id="reset-err" class="auth-err"></div>
+      <div class="form-row"><input class="inp" id="reset-new" placeholder="Yangi parol (6+)" type="password"></div>
+      <div class="form-row"><input class="inp" id="reset-confirm" placeholder="Tasdiqlash" type="password" onkeydown="if(event.key==='Enter')doReset()"></div>
+      <button class="btn btn-gold" style="width:100%" id="reset-btn" onclick="doReset()">Saqlash</button>
+    </div>
+    <div id="reset-invalid" style="display:none;text-align:center;padding:20px 0">
+      <div style="font-size:32px;margin-bottom:10px">⚠️</div><div style="color:var(--red)">Havola eskirgan</div>
+      <button class="btn btn-ghost" style="margin-top:12px" onclick="openForgotFromReset()">Qayta so'rash</button>
+    </div>
+    <div id="reset-done" style="display:none;text-align:center;padding:20px 0">
+      <div style="font-size:32px;margin-bottom:10px">✅</div><div style="color:var(--grn);font-weight:600">Parol o'zgartirildi!</div>
+      <button class="btn btn-gold" style="margin-top:12px" onclick="closeReset();showAuthModal()">Kirish</button>
+    </div>
+  </div>
+</div>
+
+<!-- AUTH LANDING -->
+<div id="auth" style="display:none;min-height:100vh;align-items:center;justify-content:center;background:var(--bg);flex-direction:column;gap:32px;padding:40px 20px">
+  <div style="text-align:center">
+    <div style="width:80px;height:80px;background:var(--gold);border-radius:24px;display:flex;align-items:center;justify-content:center;margin:0 auto 20px;box-shadow:0 12px 40px var(--gold-glow)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" width="40" height="40"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+    </div>
+    <div style="font-family:'Syne',sans-serif;font-size:42px;font-weight:800;color:var(--tx1)">Mind<span style="color:var(--gold)">Hub</span></div>
+    <div style="color:var(--tx3);margin-top:10px;font-size:16px">G'oyalar dunyosiga xush kelibsiz</div>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:10px;align-items:center">
+    <button class="btn btn-gold" style="padding:14px 48px;font-size:16px" onclick="showAuthModal();switchAmTab('register')">Boshlash</button>
+    <button class="btn btn-ghost" style="padding:10px 32px" onclick="showAuthModal();switchAmTab('login')">Kirish</button>
+  </div>
+</div>
+
+<!-- MAIN APP -->
+<div id="app">
+  <header id="topbar">
+    <div class="tb-logo" onclick="goSec('home');loadFeed(true)">
+      <div class="tb-logo-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div>
+      Mind<em>Hub</em>
+    </div>
+    <div class="tb-search">
+      <svg class="tb-search-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input placeholder="Qidirish..." oninput="onTopSearch(event)" autocomplete="off">
+    </div>
+    <div class="tb-right">
+      <button class="theme-btn" id="theme-btn" onclick="toggleTheme()"></button>
+      <button class="tb-ico" onclick="requireAuth(()=>{goSec('notifs');loadNotifs();markNotifs();})" title="Bildirishnomalar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+        <span class="tb-notif-dot" id="notif-dot"></span>
+      </button>
+      <button class="tb-ico" onclick="requireAuth(()=>{goSec('msgs');loadConvos();})">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+      </button>
+      <button class="tb-post-btn" onclick="requireAuth(()=>openSubmit())">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Post
+      </button>
+      <div class="tb-av-wrap" onclick="requireAuth(()=>{goSec('user');openUser(window._me?.id)})">
+        <div class="av tb-av" id="tb-av"></div>
+        <div class="tb-av-info"><span class="tb-av-name" id="tb-av-name">Mehmon</span><span class="tb-av-karma" id="tb-av-karma"></span></div>
+      </div>
+    </div>
+  </header>
+
+  <!-- MOBILE SEARCH BAR -->
+  <div id="mobile-search-bar">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="position:absolute;left:24px;top:50%;transform:translateY(-50%);color:var(--tx4);pointer-events:none"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <input id="mobile-search-inp" placeholder="Qidiruv: post, jamoa, foydalanuvchi..." oninput="onTopSearch(event)">
+  </div>
+
+  <div id="layout">
+    <!-- LEFT SIDEBAR -->
+    <aside class="left-sb">
+      <div class="lsb-inner">
+        <div class="lsb-card">
+          <div class="lsb-user" onclick="requireAuth(()=>{goSec('user');openUser(window._me?.id)})">
+            <div class="av" id="sb-av" style="width:30px;height:30px;font-size:11px;border-radius:50%;flex-shrink:0"></div>
+            <div><div class="lsb-uname" id="sb-uname">u/mehmon</div><div class="lsb-ukrm" id="sb-karma"></div></div>
+          </div>
+          <div class="lsb-divider"></div>
+          <button class="lsb-btn active" data-sec="home" onclick="goSec('home');loadFeed(true)"><span class="lsb-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></span>Bosh sahifa</button>
+          <button class="lsb-btn" data-sec="popular" onclick="goSec('popular');loadTopComs()"><span class="lsb-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg></span>Mashhur</button>
+          <button class="lsb-btn" data-sec="notifs" onclick="goSec('notifs');loadNotifs();markNotifs()"><span class="lsb-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg></span>Bildirishnomalar<span class="badge" id="notif-badge-lsb" style="display:none;margin-left:auto"></span></button>
+          <button class="lsb-btn" data-sec="msgs" onclick="goSec('msgs');loadConvos()"><span class="lsb-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></span>Xabarlar</button>
+          <button class="lsb-btn" data-sec="saved" onclick="goSec('saved');loadSavedPosts()"><span class="lsb-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z"/></svg></span>Saqlangan</button>
+          <button class="lsb-btn" data-sec="user" onclick="requireAuth(()=>{goSec('user');openUser(window._me?.id)})"><span class="lsb-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>Profilim</button>
+          <button class="lsb-btn" data-sec="settings" onclick="goSec('settings');loadSettings()"><span class="lsb-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg></span>Sozlamalar</button>
+          <button class="lsb-btn" id="admin-lsb" data-sec="admin" onclick="goSec('admin');loadAdmin()" style="display:none"><span class="lsb-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span>Admin</button>
+          <div class="lsb-divider"></div>
+          <button class="lsb-btn" onclick="requireAuth(openCreateCom)"><span class="lsb-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>Jamoa yaratish</button>
+          <button class="lsb-btn" onclick="doLogout()"><span class="lsb-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span>Chiqish</button>
+        </div>
+        <div class="lsb-card"><div class="lsb-sect">Mening jamoalarim</div><div id="my-coms"></div></div>
+      </div>
+    </aside>
+
+    <!-- FEED AREA -->
+    <div id="feed-area">
+      <div id="sec-home" class="section active">
+        <div class="sort-bar">
+          <button class="sort-btn active" data-sort="hot" onclick="setFeedSort('hot')">🔥 Mashhur</button>
+          <button class="sort-btn" data-sort="new" onclick="setFeedSort('new')">🆕 Yangi</button>
+          <button class="sort-btn" data-sort="top" onclick="setFeedSort('top')">⭐ Top</button>
+        </div>
+        <div class="create-box" onclick="requireAuth(()=>openSubmit())">
+          <div class="av" id="cb-av" style="width:36px;height:36px;font-size:13px;border-radius:50%;flex-shrink:0"></div>
+          <div class="create-box-inp">Fikringizni ulashing...</div>
+          <button class="btn btn-gold" style="padding:7px 13px;font-size:12px" onclick="event.stopPropagation();requireAuth(()=>openSubmit())">Post</button>
+        </div>
+        <div id="feed-cnt"></div>
+        <div id="scroll-trigger" style="height:20px"></div>
+      </div>
+
+      <div id="sec-popular" class="section">
+        <div class="sr-hd" style="margin-bottom:10px">Mashhur jamoalar</div>
+        <div id="popular-cnt"></div>
+      </div>
+
+      <div id="sec-notifs" class="section">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+          <div style="font-size:18px;font-weight:800;font-family:'Syne',sans-serif">🔔 Bildirishnomalar</div>
+          <button class="btn btn-ghost" onclick="markNotifs()">Barchasini o'qildi</button>
+        </div>
+        <div id="notifs-list"></div>
+      </div>
+
+      <div id="sec-msgs" class="section">
+        <div class="msg-wrap">
+          <div class="msg-list">
+            <div class="msg-list-hd">
+              <div style="display:flex;align-items:center;gap:8px">
+                <button class="msg-back-btn" id="msg-back-btn" onclick="goSec('home');loadFeed(true)" title="Orqaga">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="16" height="16"><polyline points="15 18 9 12 15 6"/></svg>
+                </button>
+                <span>Xabarlar</span>
+              </div>
+              <div class="new-msg-btn" onclick="toast('Qidiruv orqali foydalanuvchi profiliga kirib xabar yuboring')" title="Yangi xabar">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </div>
+            </div>
+            <!-- INSTAGRAM-STYLE HORIZONTAL CONTACTS -->
+            <input class="msg-search" id="msg-search" placeholder="Qidirish..." oninput="filterConvos(this.value)">
+            <div class="convos" id="conv-list"></div>
+          </div>
+          <div class="chat-col">
+<div class="chat-empty" id="chat-empty">
+  <div class="chat-empty-icon">💬</div>
+  <div style="font-size:14px;font-weight:600;color:var(--tx3)">Suhbatlar</div>
+  <div style="font-size:12px;color:var(--tx4)">Hozircha suhbatlar yo'q. Yangi suhbatni foydalanuvchi profilidan boshlang.</div>
+</div>
+            <div class="chat-panel" id="chat-panel">
+              <div class="chat-hd" style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--surface2);flex-shrink:0">
+                <div id="chat-hd-inner" style="display:flex;align-items:center;gap:10px;flex:1;min-width:0"></div>
+              </div>
+              <div id="msg-pinned-bar" class="msg-pinned-bar" style="display:none">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17H19V15L17 13V7L19 5V3H5V5L7 7V13L5 15V17Z"/></svg>
+                <span class="msg-pinned-text"></span>
+                <span style="font-size:11px;color:var(--tx4);flex-shrink:0">Mahkamlangan</span>
+              </div>
+              <div class="chat-msgs" id="chat-msgs"></div>
+              <div id="reply-preview-bar" style="display:none;align-items:center;gap:10px;padding:8px 14px;background:var(--surface2);border-top:2px solid var(--gold-bd);font-size:12px;flex-shrink:0">
+                <svg viewBox="0 0 24 24" fill="none" stroke="var(--gold)" stroke-width="2" width="14" height="14" style="flex-shrink:0"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 00-4-4H4"/></svg>
+                <div style="flex:1;border-left:3px solid var(--gold);padding-left:8px;overflow:hidden">
+                  <div id="reply-preview-name" style="font-weight:700;color:var(--gold);font-size:11px;margin-bottom:2px"></div>
+                  <div id="reply-preview-text" style="color:var(--tx3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px"></div>
+                </div>
+                <button onclick="cancelReply()" style="color:var(--tx4);font-size:18px;background:none;border:none;cursor:pointer;padding:4px">✕</button>
+              </div>
+              <div id="voice-rec-bar" style="display:none;align-items:center;gap:10px;padding:10px 14px;background:rgba(217,64,64,.08);border-top:1px solid rgba(217,64,64,.2);flex-shrink:0">
+                <div style="display:flex;align-items:center;gap:6px;flex:1">
+                  <div style="width:10px;height:10px;border-radius:50%;background:var(--red);animation:pulse-red 1s infinite;flex-shrink:0"></div>
+                  <span style="font-size:13px;font-weight:600;color:var(--red)">Yozilmoqda...</span>
+                  <span id="voice-rec-timer" style="font-size:13px;font-weight:700;color:var(--tx2);margin-left:4px">0:00</span>
+                </div>
+                <button onclick="cancelVoice()" style="background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r);padding:6px 12px;font-size:12px;font-weight:600;color:var(--tx3);cursor:pointer">Bekor</button>
+                <button onclick="sendVoiceMsg()" style="background:var(--red);border:none;border-radius:var(--r);padding:6px 14px;font-size:12px;font-weight:700;color:#fff;cursor:pointer">Yuborish</button>
+              </div>
+              <!-- EMOJI PICKER PANEL -->
+              <div id="emoji-picker-panel" style="display:none;padding:10px 12px;background:var(--surface2);border-top:1px solid var(--border);flex-wrap:wrap;gap:4px;max-height:150px;overflow-y:auto;flex-shrink:0"></div>
+              <div class="chat-inp-row" id="chat-inp-row">
+                <button onclick="toggleEmojiPicker()" title="Emoji" style="width:36px;height:36px;border-radius:50%;border:1px solid var(--border2);background:var(--bg2);color:var(--tx3);display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;font-size:17px;transition:all .15s">😊</button>
+                <label title="Rasm yuborish" style="width:36px;height:36px;border-radius:50%;border:1px solid var(--border2);background:var(--bg2);color:var(--tx3);display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;transition:all .15s">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                  <input type="file" accept="image/*" style="display:none" onchange="sendChatImage(this)">
+                </label>
+                <button onclick="startVoiceRec()" title="Ovozli xabar" style="width:36px;height:36px;border-radius:50%;border:1px solid var(--border2);background:var(--bg2);color:var(--tx3);display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;transition:all .15s">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                </button>
+                <input class="chat-inp" id="chat-inp" placeholder="Xabar yozing..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg();}">
+                <button class="chat-send" onclick="sendMsg()">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="sec-community" class="section">
+        <div id="com-hd-area"></div>
+        <div class="sort-bar" id="com-sort-bar">
+          <button class="sort-btn active" data-sort="hot" onclick="setComSort('hot')">🔥 Mashhur</button>
+          <button class="sort-btn" data-sort="new" onclick="setComSort('new')">🆕 Yangi</button>
+          <button class="sort-btn" data-sort="top" onclick="setComSort('top')">⭐ Top</button>
+        </div>
+        <div id="com-feed-cnt"></div>
+        <div id="com-scroll-trigger" style="height:20px"></div>
+      </div>
+
+      <div id="sec-post" class="section">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+          <button onclick="history.length>1?history.back():goSec('home')" style="display:flex;align-items:center;gap:6px;background:none;border:none;color:var(--tx3);font-size:13px;font-weight:600;cursor:pointer;padding:6px 10px;border-radius:var(--r);transition:all .15s" onmouseenter="this.style.background='var(--bg2)'" onmouseleave="this.style.background='none'">
+            <svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2.5' width='16' height='16'><polyline points='15 18 9 12 15 6'/></svg>
+            Orqaga
+          </button>
+        </div>
+        <div id="post-detail"></div>
+        <div id="cmts-cnt" style="margin-top:8px"></div>
+      </div>
+
+      <div id="sec-user" class="section"><div id="user-cnt"></div></div>
+      <div id="sec-search" class="section"><div id="search-res"></div></div>
+      <div id="sec-saved" class="section">
+        <div style="font-size:18px;font-weight:800;font-family:'Syne',sans-serif;margin-bottom:12px">🔖 Saqlangan postlar</div>
+        <div id="saved-cnt"></div>
+      </div>
+      <div id="sec-settings" class="section"><div id="settings-cnt"></div></div>
+      <div id="sec-admin" class="section"><div id="admin-cnt"></div></div>
+    </div>
+
+    <aside id="rsb"><div id="rsb-inner"></div></aside>
+  </div>
+</div>
+
+<!-- SUBMIT POST -->
+<div id="sub-overlay" class="overlay">
+  <div class="modal" style="width:620px;max-height:92vh;overflow-y:auto">
+    <div class="modal-hd">
+      <div class="modal-title">✍️ Yangi post</div>
+      <button class="modal-close" onclick="closeSubmit()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>
+    <div class="sub-tabs">
+      <button class="sub-tab active" data-t="text" onclick="switchSubTab('text')">📝 Matn</button>
+      <button class="sub-tab" data-t="image" onclick="switchSubTab('image')">🖼 Rasm</button>
+      <button class="sub-tab" data-t="video" onclick="switchSubTab('video')">🎬 Video</button>
+      <button class="sub-tab" data-t="audio" onclick="switchSubTab('audio')">🎵 Audio</button>
+      <button class="sub-tab" data-t="link" onclick="switchSubTab('link')">🔗 Havola</button>
+      <button class="sub-tab" data-t="poll" onclick="switchSubTab('poll')">📊 So'rovnoma</button>
+    </div>
+    <div class="form-row com-pick" style="margin-bottom:10px">
+      <input class="inp" id="sub-com-inp" placeholder="📌 Jamoa tanlang..." oninput="initComPicker()" autocomplete="off">
+      <div class="com-dd" id="sub-com-dd"></div>
+    </div>
+    <div class="form-row" style="margin-bottom:10px">
+      <textarea class="inp sub-title" id="sub-title" placeholder="Sarlavha..." rows="2" style="font-size:15px;font-weight:600;font-family:'Syne',sans-serif"></textarea>
+    </div>
+
+    <div class="sub-form active" data-t="text">
+      <textarea class="inp sub-body" id="sub-body" placeholder="Matn yozing... (ixtiyoriy)" rows="5"></textarea>
+    </div>
+
+    <div class="sub-form" data-t="image">
+      <input type="file" id="sub-img-file" accept="image/*" style="display:none" onchange="previewSubImg(this)">
+      <div id="sub-img-drop" onclick="document.getElementById('sub-img-file').click()" style="border:2px dashed var(--border2);border-radius:var(--r-lg);padding:40px;text-align:center;cursor:pointer;color:var(--tx4);transition:border-color .2s">
+        <div style="font-size:40px;margin-bottom:10px">🖼️</div>
+        <div style="font-weight:600;margin-bottom:4px">Rasm yuklash uchun bosing</div>
+        <small>JPG, PNG, GIF, WEBP, HEIC (max 10MB)</small>
+      </div>
+      <div id="sub-img-preview"></div>
+    </div>
+
+    <div class="sub-form" data-t="video">
+      <input type="file" id="sub-vid-file" accept="video/*" style="display:none" onchange="previewSubVid(this)">
+      <div id="vid-warn" style="background:rgba(200,146,42,.08);border:1px solid var(--gold-bd);border-radius:var(--r);padding:10px 14px;margin-bottom:10px;display:flex;align-items:center;gap:8px;font-size:13px;color:var(--gold)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <span id="vid-warn-text">Video ko'pi bilan 10 daqiqa bo'lishi kerak</span>
+      </div>
+      <div onclick="document.getElementById('sub-vid-file').click()" style="border:2px dashed var(--border2);border-radius:var(--r-lg);padding:40px;text-align:center;cursor:pointer;color:var(--tx4);transition:border-color .2s">
+        <div style="font-size:40px;margin-bottom:10px">🎬</div>
+        <div style="font-weight:600;margin-bottom:4px">Video yuklash (max 10 daqiqa)</div>
+        <small>MP4, WebM, MOV (max 500MB)</small>
+      </div>
+      <div id="sub-vid-preview"></div>
+      <!-- Poll after video -->
+      <div id="vid-poll-section" style="margin-top:14px;display:none">
+        <div style="background:var(--gold-soft);border:1px solid var(--gold-bd);border-radius:var(--r-lg);padding:14px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+            <div style="font-size:13px;font-weight:700;color:var(--gold)">📊 Videoga so'rovnoma qo'shish</div>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:var(--tx2)">
+              <input type="checkbox" id="vid-poll-enable" onchange="document.getElementById('vid-poll-fields').style.display=this.checked?'block':'none'"> Yoqish
+            </label>
+          </div>
+          <div id="vid-poll-fields" style="display:none">
+            <input class="inp" id="vid-poll-question" placeholder="So'rovnoma savoli..." style="margin-bottom:8px">
+            <div id="vid-poll-options">
+              <input class="inp poll-opt-inp" placeholder="Variant 1" style="margin-bottom:6px">
+              <input class="inp poll-opt-inp" placeholder="Variant 2" style="margin-bottom:6px">
+              <input class="inp poll-opt-inp" placeholder="Variant 3 (ixtiyoriy)" style="margin-bottom:6px">
+              <input class="inp poll-opt-inp" placeholder="Variant 4 (ixtiyoriy)" style="margin-bottom:6px">
+              <input class="inp poll-opt-inp" placeholder="Variant 5 (ixtiyoriy)" style="margin-bottom:6px">
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+              <label class="form-lbl" style="margin:0;white-space:nowrap">Muddat:</label>
+              <select class="inp" id="vid-poll-days" style="width:auto;padding:6px 10px">
+                <option value="1">1 kun</option><option value="3" selected>3 kun</option>
+                <option value="7">1 hafta</option><option value="14">2 hafta</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sub-form" data-t="audio">
+      <input type="file" id="sub-aud-file" accept="audio/*" style="display:none" onchange="previewSubAud(this)">
+      <div onclick="document.getElementById('sub-aud-file').click()" style="border:2px dashed var(--border2);border-radius:var(--r-lg);padding:40px;text-align:center;cursor:pointer;color:var(--tx4);transition:border-color .2s">
+        <div style="font-size:40px;margin-bottom:10px">🎵</div>
+        <div style="font-weight:600;margin-bottom:4px">Audio yuklash</div>
+        <small>MP3, WAV, M4A, AAC, OGG (max 20MB)</small>
+      </div>
+      <div id="sub-aud-preview"></div>
+    </div>
+
+    <div class="sub-form" data-t="link">
+      <input class="inp" id="sub-link" placeholder="https://..." type="url">
+    </div>
+
+    <div class="sub-form" data-t="poll">
+      <div style="background:var(--bg2);border-radius:var(--r-lg);padding:16px">
+        <div class="form-row">
+          <label class="form-lbl">So'rovnoma savoli</label>
+          <input class="inp" id="poll-question" placeholder="Savol yozing...">
+        </div>
+        <label class="form-lbl" style="margin-bottom:8px;display:block">Variantlar (2-5 ta)</label>
+        <div id="poll-options">
+          <input class="inp poll-opt-inp" placeholder="Variant 1" style="margin-bottom:6px">
+          <input class="inp poll-opt-inp" placeholder="Variant 2" style="margin-bottom:6px">
+          <input class="inp poll-opt-inp" placeholder="Variant 3 (ixtiyoriy)" style="margin-bottom:6px">
+          <input class="inp poll-opt-inp" placeholder="Variant 4 (ixtiyoriy)" style="margin-bottom:6px">
+          <input class="inp poll-opt-inp" placeholder="Variant 5 (ixtiyoriy)" style="margin-bottom:6px">
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:10px">
+          <label class="form-lbl" style="margin:0;white-space:nowrap">Muddat:</label>
+          <select class="inp" id="poll-days" style="width:auto;padding:6px 10px">
+            <option value="1">1 kun</option><option value="3" selected>3 kun</option>
+            <option value="7">1 hafta</option><option value="14">2 hafta</option><option value="30">1 oy</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-acts" style="margin-top:14px">
+      <button class="btn btn-ghost" onclick="closeSubmit()">Bekor</button>
+      <button class="btn btn-gold" id="sub-btn" onclick="doSubmitPost()">Nashr qilish</button>
+    </div>
+  </div>
+</div>
+
+<!-- CREATE COMMUNITY -->
+<div id="cc-overlay" class="overlay">
+  <div class="modal" style="width:520px;max-height:92vh;overflow-y:auto">
+    <div class="modal-hd">
+      <div class="modal-title">🏘️ Yangi jamoa</div>
+      <button class="modal-close" onclick="closeCreateCom()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>
+    <!-- Banner -->
+    <div style="margin-bottom:12px">
+      <label class="form-lbl">Banner rasmi</label>
+      <input type="file" id="cc-banner-file" accept="image/*" style="display:none" onchange="previewCCBanner(this)">
+      <div onclick="document.getElementById('cc-banner-file').click()" style="height:100px;background:var(--bg2);border:2px dashed var(--border2);border-radius:var(--r-lg);display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;position:relative;transition:border-color .18s" onmouseover="this.style.borderColor='var(--gold)'" onmouseout="this.style.borderColor='var(--border2)'">
+        <div id="cc-banner-placeholder" style="text-align:center;color:var(--tx4)">
+          <div style="font-size:28px;margin-bottom:6px">🏞️</div>
+          <div style="font-size:12px">Banner rasmini yuklang</div>
+        </div>
+        <img id="cc-banner-preview" src="" alt="" style="display:none;position:absolute;inset:0;width:100%;height:100%;object-fit:cover">
+      </div>
+    </div>
+    <!-- Avatar -->
+    <div style="margin-bottom:14px">
+      <label class="form-lbl">Jamoa avatari</label>
+      <div style="display:flex;align-items:center;gap:14px">
+        <input type="file" id="cc-avatar-file" accept="image/*" style="display:none" onchange="previewCCAvatar(this)">
+        <div onclick="document.getElementById('cc-avatar-file').click()" style="width:64px;height:64px;border-radius:16px;background:var(--bg2);border:2px dashed var(--border2);display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;flex-shrink:0;position:relative;transition:border-color .18s" onmouseover="this.style.borderColor='var(--gold)'" onmouseout="this.style.borderColor='var(--border2)'">
+          <span id="cc-avatar-placeholder" style="font-size:28px">📸</span>
+          <img id="cc-avatar-preview" src="" alt="" style="display:none;position:absolute;inset:0;width:100%;height:100%;object-fit:cover">
+        </div>
+        <div style="font-size:13px;color:var(--tx3)"><div style="font-weight:600;margin-bottom:2px">Jamoa rasmi</div><div style="font-size:12px">JPG, PNG (max 5MB)</div></div>
+      </div>
+    </div>
+    <div class="form-row"><label class="form-lbl">Slug (url nomi)</label><input class="inp" id="nc-slug" placeholder="masalan: texnologiya"></div>
+    <div class="form-row"><label class="form-lbl">To'liq nom</label><input class="inp" id="nc-name" placeholder="Texnologiya"></div>
+    <div class="form-row"><label class="form-lbl">Tavsif</label><textarea class="inp" id="nc-desc" rows="3" placeholder="Jamoa haqida..."></textarea></div>
+    <!-- Color picker -->
+    <div class="form-row">
+      <label class="form-lbl">Jamoa rangi</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;align-items:center">
+        <div class="color-opt" data-color="#C8922A" onclick="selectCCColor('#C8922A',this)" style="width:32px;height:32px;border-radius:50%;background:#C8922A;cursor:pointer;transition:transform .15s;border:3px solid rgba(255,255,255,.5)"></div>
+        <div class="color-opt" data-color="#4D8FFF" onclick="selectCCColor('#4D8FFF',this)" style="width:32px;height:32px;border-radius:50%;background:#4D8FFF;cursor:pointer;transition:transform .15s;border:3px solid transparent"></div>
+        <div class="color-opt" data-color="#46C97A" onclick="selectCCColor('#46C97A',this)" style="width:32px;height:32px;border-radius:50%;background:#46C97A;cursor:pointer;transition:transform .15s;border:3px solid transparent"></div>
+        <div class="color-opt" data-color="#E05252" onclick="selectCCColor('#E05252',this)" style="width:32px;height:32px;border-radius:50%;background:#E05252;cursor:pointer;transition:transform .15s;border:3px solid transparent"></div>
+        <div class="color-opt" data-color="#9B6FD4" onclick="selectCCColor('#9B6FD4',this)" style="width:32px;height:32px;border-radius:50%;background:#9B6FD4;cursor:pointer;transition:transform .15s;border:3px solid transparent"></div>
+        <div class="color-opt" data-color="#E8703A" onclick="selectCCColor('#E8703A',this)" style="width:32px;height:32px;border-radius:50%;background:#E8703A;cursor:pointer;transition:transform .15s;border:3px solid transparent"></div>
+        <div class="color-opt" data-color="#3AADCC" onclick="selectCCColor('#3AADCC',this)" style="width:32px;height:32px;border-radius:50%;background:#3AADCC;cursor:pointer;transition:transform .15s;border:3px solid transparent"></div>
+        <div class="color-opt" data-color="#E84393" onclick="selectCCColor('#E84393',this)" style="width:32px;height:32px;border-radius:50%;background:#E84393;cursor:pointer;transition:transform .15s;border:3px solid transparent"></div>
+        <input type="color" value="#C8922A" oninput="selectCCColor(this.value,null)" style="width:32px;height:32px;border-radius:50%;border:2px solid var(--border2);cursor:pointer;padding:2px;background:none" title="Rang tanlang">
+      </div>
+      <input type="hidden" id="cc-color" value="#C8922A">
+    </div>
+    <!-- Private toggle -->
+    <div class="form-row">
+      <label class="form-lbl">Jamoat turi</label>
+      <div style="display:flex;gap:10px;margin-top:6px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:10px 16px;border:2px solid var(--gold);border-radius:var(--r);background:var(--gold-soft);flex:1;transition:all .18s" id="cc-pub-opt">
+          <input type="radio" name="cc-priv" value="0" checked style="accent-color:var(--gold)">
+          <div><div style="font-weight:700;font-size:13px">🌍 Ommaviy</div><div style="font-size:11px;color:var(--tx3);margin-top:2px">Hammaning ko'rishiga ruxsat</div></div>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:10px 16px;border:2px solid var(--border);border-radius:var(--r);background:var(--bg2);flex:1;transition:all .18s" id="cc-priv-opt">
+          <input type="radio" name="cc-priv" value="1" style="accent-color:var(--gold)">
+          <div><div style="font-weight:700;font-size:13px">🔒 Maxfiy</div><div style="font-size:11px;color:var(--tx3);margin-top:2px">Faqat a'zolar ko'radi</div></div>
+        </label>
+      </div>
+    </div>
+    <div class="modal-acts">
+      <button class="btn btn-ghost" onclick="closeCreateCom()">Bekor</button>
+      <button class="btn btn-gold" id="cc-create-btn" onclick="doCreateCom()">Yaratish</button>
+    </div>
+  </div>
+</div>
+
+<!-- EDIT COMMUNITY -->
+<div id="ec-overlay" class="overlay">
+  <div class="modal" style="width:520px;max-height:92vh;overflow-y:auto">
+    <div class="modal-hd">
+      <div class="modal-title">⚙️ Jamoani tahrirlash</div>
+      <button class="modal-close" onclick="document.getElementById('ec-overlay').classList.remove('open')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>
+    <input type="hidden" id="ec-slug">
+    <div style="margin-bottom:12px">
+      <label class="form-lbl">Banner rasmi</label>
+      <input type="file" id="ec-banner-file" accept="image/*" style="display:none" onchange="previewECBanner(this)">
+      <div onclick="document.getElementById('ec-banner-file').click()" style="height:90px;background:var(--bg2);border:2px dashed var(--border2);border-radius:var(--r-lg);display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;position:relative;transition:border-color .18s" onmouseover="this.style.borderColor='var(--gold)'" onmouseout="this.style.borderColor='var(--border2)'">
+        <span style="color:var(--tx4);font-size:13px">🏞️ Banner o'zgartirish</span>
+        <img id="ec-banner-preview" src="" alt="" style="display:none;position:absolute;inset:0;width:100%;height:100%;object-fit:cover">
+      </div>
+    </div>
+    <div style="margin-bottom:14px;display:flex;align-items:center;gap:12px">
+      <input type="file" id="ec-avatar-file" accept="image/*" style="display:none" onchange="previewECAvatar(this)">
+      <div onclick="document.getElementById('ec-avatar-file').click()" style="width:56px;height:56px;border-radius:14px;background:var(--bg2);border:2px dashed var(--border2);display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;flex-shrink:0;position:relative;transition:border-color .18s" onmouseover="this.style.borderColor='var(--gold)'" onmouseout="this.style.borderColor='var(--border2)'">
+        <span style="font-size:24px">📸</span>
+        <img id="ec-avatar-preview" src="" alt="" style="display:none;position:absolute;inset:0;width:100%;height:100%;object-fit:cover">
+      </div>
+      <div style="font-size:13px;color:var(--tx3)">Avatar o'zgartirish uchun bosing</div>
+    </div>
+    <div class="form-row"><label class="form-lbl">Nom</label><input class="inp" id="ec-name"></div>
+    <div class="form-row"><label class="form-lbl">Tavsif</label><textarea class="inp" id="ec-desc" rows="3"></textarea></div>
+    <div class="form-row"><label class="form-lbl">Qoidalar</label><textarea class="inp" id="ec-rules" rows="3" placeholder="Jamoa qoidalari..."></textarea></div>
+    <div class="form-row">
+      <label class="form-lbl">Rang</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;align-items:center">
+        <div class="color-opt" data-color="#C8922A" onclick="selectECColor('#C8922A',this)" style="width:28px;height:28px;border-radius:50%;background:#C8922A;cursor:pointer;transition:transform .15s;border:3px solid rgba(255,255,255,.5)"></div>
+        <div class="color-opt" data-color="#4D8FFF" onclick="selectECColor('#4D8FFF',this)" style="width:28px;height:28px;border-radius:50%;background:#4D8FFF;cursor:pointer;transition:transform .15s;border:3px solid transparent"></div>
+        <div class="color-opt" data-color="#46C97A" onclick="selectECColor('#46C97A',this)" style="width:28px;height:28px;border-radius:50%;background:#46C97A;cursor:pointer;transition:transform .15s;border:3px solid transparent"></div>
+        <div class="color-opt" data-color="#E05252" onclick="selectECColor('#E05252',this)" style="width:28px;height:28px;border-radius:50%;background:#E05252;cursor:pointer;transition:transform .15s;border:3px solid transparent"></div>
+        <div class="color-opt" data-color="#9B6FD4" onclick="selectECColor('#9B6FD4',this)" style="width:28px;height:28px;border-radius:50%;background:#9B6FD4;cursor:pointer;transition:transform .15s;border:3px solid transparent"></div>
+        <div class="color-opt" data-color="#E8703A" onclick="selectECColor('#E8703A',this)" style="width:28px;height:28px;border-radius:50%;background:#E8703A;cursor:pointer;transition:transform .15s;border:3px solid transparent"></div>
+        <div class="color-opt" data-color="#3AADCC" onclick="selectECColor('#3AADCC',this)" style="width:28px;height:28px;border-radius:50%;background:#3AADCC;cursor:pointer;transition:transform .15s;border:3px solid transparent"></div>
+        <div class="color-opt" data-color="#E84393" onclick="selectECColor('#E84393',this)" style="width:28px;height:28px;border-radius:50%;background:#E84393;cursor:pointer;transition:transform .15s;border:3px solid transparent"></div>
+        <input type="color" value="#C8922A" oninput="selectECColor(this.value,null)" style="width:28px;height:28px;border-radius:50%;border:2px solid var(--border2);cursor:pointer;padding:2px;background:none">
+      </div>
+      <input type="hidden" id="ec-color" value="#C8922A">
+    </div>
+    <div class="modal-acts">
+      <button class="btn btn-ghost" onclick="document.getElementById('ec-overlay').classList.remove('open')">Bekor</button>
+      <button class="btn btn-gold" id="ec-save-btn" onclick="doEditCom()">Saqlash</button>
+    </div>
+  </div>
+</div>
+
+<!-- COMMUNITY ADMIN MANAGEMENT -->
+<div id="com-admin-overlay" class="overlay">
+  <div class="modal" style="width:520px;max-height:92vh;overflow-y:auto">
+    <div class="modal-hd">
+      <div class="modal-title">👥 Jamoa boshqaruvi</div>
+      <button class="modal-close" onclick="document.getElementById('com-admin-overlay').classList.remove('open')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>
+    <div>
+      <div style="font-size:14px;font-weight:700;font-family:'Syne',sans-serif;margin-bottom:8px">📩 So'rovlar</div>
+      <div id="com-requests-list"></div>
+    </div>
+    <div style="margin-top:16px">
+      <div style="font-size:14px;font-weight:700;font-family:'Syne',sans-serif;margin-bottom:8px">👑 Adminlar</div>
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <input class="inp" id="com-admin-username" placeholder="Username kiriting..." style="flex:1;font-size:13px;padding:8px 12px">
+        <button class="btn btn-gold" style="font-size:12px;padding:8px 14px" onclick="addComAdmin(window._curCom)">Qo'shish</button>
+      </div>
+      <div id="com-admins-list"></div>
+    </div>
+    <div style="margin-top:16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div style="font-size:14px;font-weight:700;font-family:'Syne',sans-serif">🔒 Jamoa turi</div>
+        <button class="btn btn-ghost" id="com-private-toggle" style="font-size:12px;padding:6px 12px"></button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- DELETE POST -->
+<div id="del-overlay" class="overlay">
+  <div class="modal" style="max-width:340px;text-align:center">
+    <div style="font-size:40px;margin-bottom:14px">⚠️</div>
+    <div class="modal-title" style="margin-bottom:8px">Postni o'chirish</div>
+    <div style="font-size:13px;color:var(--tx3);margin-bottom:20px">Bu amalni ortga qaytarib bo'lmaydi</div>
+    <div class="modal-acts" style="justify-content:center">
+      <button class="btn btn-ghost" onclick="closeDelPost()">Bekor</button>
+      <button style="background:#E94560;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-weight:600;cursor:pointer;font-size:13px" onclick="doDelPost()">⚠️ O'chirish</button>
+    </div>
+  </div>
+</div>
+
+<!-- BAN MODAL -->
+<div id="ban-modal" class="overlay">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-hd"><div class="modal-title">🚫 Bloklash sababi</div></div>
+    <div class="form-row"><label class="form-lbl">Sabab</label><textarea class="inp" id="ban-reason-inp" placeholder="Sabab kiriting..." rows="3"></textarea></div>
+    <div class="form-row"><label class="form-lbl">Muddat</label>
+      <select class="inp" id="ban-duration" style="font-size:13px">
+        <option value="0">Doimiy</option>
+        <option value="1">1 kun</option>
+        <option value="3">3 kun</option>
+        <option value="7">1 hafta</option>
+        <option value="30">1 oy</option>
+        <option value="90">3 oy</option>
+        <option value="365">1 yil</option>
+      </select>
+    </div>
+    <div class="modal-acts">
+      <button class="btn btn-ghost" onclick="closeBanModal()">Bekor</button>
+      <button style="background:#E94560;color:#fff;border:none;padding:8px 18px;border-radius:8px;font-weight:600;cursor:pointer;font-size:13px" onclick="confirmBan()">🚫 Bloklash</button>
+    </div>
+  </div>
+</div>
+
+<!-- COMMUNITY DELETE CONFIRM MODAL -->
+<div id="com-delete-modal" class="overlay">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-hd"><div class="modal-title">🗑️ Jamoani o'chirish</div></div>
+    <div style="padding:0 20px 16px;font-size:14px;color:var(--tx3);line-height:1.6">
+      Bu amalni qaytarib bo'lmaydi. Jamoa va uning barcha postlari o'chiriladi.
+      <div style="margin-top:10px;padding:10px 13px;background:rgba(217,64,64,.08);border-radius:var(--r);border:1px solid rgba(217,64,64,.2);font-size:13px;color:var(--red)">
+        Tasdiqlash uchun "<strong id="com-del-slug-label"></strong>" nomini kiriting:
+      </div>
+      <input class="inp" id="com-del-confirm-inp" placeholder="Jamoa nomini kiriting..." style="margin-top:10px">
+    </div>
+    <div class="modal-acts">
+      <button class="btn btn-ghost" onclick="document.getElementById('com-delete-modal').classList.remove('open')">Bekor</button>
+      <button class="btn btn-danger" onclick="doDeleteCom()">O'chirish</button>
+    </div>
+  </div>
+</div>
+
+<!-- BAN BANNER (shows when user is banned) -->
+<div id="ban-banner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:99998;background:linear-gradient(135deg,#c0392b,#e74c3c);color:#fff;padding:12px 20px;text-align:center;font-size:13px;font-weight:600;box-shadow:0 2px 20px rgba(192,57,43,.6)">
+  🚫 Hisobingiz bloklangan. Faqat postlarni o'qishingiz mumkin. <span id="ban-reason-txt"></span>
+</div>
+
+<!-- REPORT MODAL -->
+<div id="report-overlay" class="overlay">
+  <div class="modal" style="max-width:400px">
+    <div class="modal-hd">
+      <div class="modal-title">🚩 Shikoyat</div>
+      <button class="modal-close" onclick="closeReport()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>
+    <div style="padding:0 0 8px;font-size:13px;color:var(--tx3)">Sababini tanlang:</div>
+    <div id="report-reasons" style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">
+      <button class="report-reason-btn" onclick="selectReportReason(this)" style="text-align:left;padding:10px 14px;border:1.5px solid var(--border2);border-radius:var(--r);background:var(--surface);color:var(--tx1);cursor:pointer;font-size:13px;transition:all .15s">🚫 Spam yoki reklama</button>
+      <button class="report-reason-btn" onclick="selectReportReason(this)" style="text-align:left;padding:10px 14px;border:1.5px solid var(--border2);border-radius:var(--r);background:var(--surface);color:var(--tx1);cursor:pointer;font-size:13px;transition:all .15s">😠 Haqorat yoki tahdid</button>
+      <button class="report-reason-btn" onclick="selectReportReason(this)" style="text-align:left;padding:10px 14px;border:1.5px solid var(--border2);border-radius:var(--r);background:var(--surface);color:var(--tx1);cursor:pointer;font-size:13px;transition:all .15s">🔞 Nomaqbul kontent</button>
+      <button class="report-reason-btn" onclick="selectReportReason(this)" style="text-align:left;padding:10px 14px;border:1.5px solid var(--border2);border-radius:var(--r);background:var(--surface);color:var(--tx1);cursor:pointer;font-size:13px;transition:all .15s">🚨 Boshqa (yozing)</button>
+    </div>
+    <div class="form-row"><textarea class="inp" id="report-reason-text" placeholder="Qo'shimcha izoh (ixtiyoriy)..." rows="3"></textarea></div>
+    <div class="modal-acts">
+      <button class="btn btn-ghost" onclick="closeReport()">Bekor</button>
+      <button class="btn btn-gold" id="report-submit-btn" onclick="submitReport()">Yuborish</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<!-- MOBILE BOTTOM NAV -->
+<nav id="bottom-nav" style="display:none">
+  <button class="bn-item active" id="bn-home" onclick="goSec('home');loadFeed(true);setBnActive('bn-home')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+    <span>Bosh</span>
+  </button>
+  <button class="bn-item" id="bn-search" onclick="goSec('search');setBnActive('bn-search');openMobileSearch()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <span>Qidiruv</span>
+  </button>
+  <button class="bn-item" id="bn-msgs" onclick="requireAuth(()=>{goSec('msgs');loadConvos();setBnActive('bn-msgs')})">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+    <span>Xabar</span>
+  </button>
+  <button class="bn-item bn-post" onclick="requireAuth(()=>openSubmit())">
+    <div class="bn-post-inner">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </div>
+  </button>
+  <button class="bn-item" id="bn-notifs" onclick="requireAuth(()=>{goSec('notifs');loadNotifs();markNotifs();setBnActive('bn-notifs')})">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+    <span class="bn-badge" id="bn-notif-badge"></span>
+    <span>Bildirish</span>
+  </button>
+  <button class="bn-item" id="bn-profile" onclick="requireAuth(()=>{goSec('user');openUser(window._me?.id);setBnActive('bn-profile')})">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+    <span>Mening</span>
+  </button>
+</nav>
+
+<script src="/js/core.js"></script>
+<script src="/js/posts.js"></script>
+<script src="/js/features.js"></script>
+<script src="/js/app.js"></script>
+<script>
+// Color selection helpers
+function selectCCColor(color, el) {
+  if (typeof _ccColor !== 'undefined') _ccColor = color;
+  document.getElementById('cc-color').value = color;
+  document.querySelectorAll('#cc-overlay .color-opt').forEach(b => { b.style.transform='scale(1)'; b.style.border='3px solid transparent'; b.style.boxShadow='none'; });
+  if (el) { el.style.transform='scale(1.15)'; el.style.border='3px solid white'; el.style.boxShadow='0 0 0 2px '+color; }
+  // Update avatar preview bg
+  const avWrap = document.getElementById('cc-avatar-wrap');
+  // update placeholder color
+}
+function selectECColor(color, el) {
+  document.getElementById('ec-color').value = color;
+  document.querySelectorAll('#ec-overlay .color-opt').forEach(b => { b.style.transform='scale(1)'; b.style.border='3px solid transparent'; b.style.boxShadow='none'; });
+  if (el) { el.style.transform='scale(1.15)'; el.style.border='3px solid white'; el.style.boxShadow='0 0 0 2px '+color; }
+}
+function previewCCBanner(inp) {
+  const f = inp.files?.[0]; if (!f) return;
+  const url = URL.createObjectURL(f);
+  const img = document.getElementById('cc-banner-preview');
+  const ph  = document.getElementById('cc-banner-placeholder');
+  if (img) { img.src=url; img.style.display='block'; }
+  if (ph)    ph.style.display='none';
+}
+function previewCCAvatar(inp) {
+  const f = inp.files?.[0]; if (!f) return;
+  const url = URL.createObjectURL(f);
+  const img = document.getElementById('cc-avatar-preview');
+  const ph  = document.getElementById('cc-avatar-placeholder');
+  if (img) { img.src=url; img.style.display='block'; }
+  if (ph)    ph.style.display='none';
+}
+function previewECBanner(inp) {
+  const f = inp.files?.[0]; if (!f) return;
+  const img = document.getElementById('ec-banner-preview');
+  if (img) { img.src=URL.createObjectURL(f); img.style.display='block'; }
+}
+function previewECAvatar(inp) {
+  const f = inp.files?.[0]; if (!f) return;
+  const img = document.getElementById('ec-avatar-preview');
+  if (img) { img.src=URL.createObjectURL(f); img.style.display='block'; }
+}
+// Init first color option as selected
+document.addEventListener('DOMContentLoaded', () => {
+  const first = document.querySelector('#cc-overlay .color-opt[data-color="#C8922A"]');
+  if (first) { first.style.transform='scale(1.15)'; first.style.border='3px solid white'; first.style.boxShadow='0 0 0 2px #C8922A'; }
+});
+</script>
+</body>
+</html>
