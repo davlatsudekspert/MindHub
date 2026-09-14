@@ -62,3 +62,13 @@ AI_EMBED_MODEL, AI_CHAT_MODEL, CLUSTER_THRESHOLD, CLUSTER_MIN_SIZE
 - src/ai/distribute.js — klasterga yaqin mavzularda faol foydalanuvchilarga
   taklif yuboradi (kuniga 3ta/user, postiga 5ta chegarasi bilan).
   src/ai/worker.js ai_jobs('distribute') orqali chaqiradi.
+
+## Frontend (FAZA 5)
+- public/js/trends.js — "Muammolar" (/trends) va klaster sahifasi (goSec('trends')/
+  goSec('cluster')). Yangi bo'lim qo'shsang shu faylga qo'sh, features.js allaqachon
+  1700+ qator.
+- Post yozish modali: kind selector (post/muammo/g'oya) + sarlavha yozilganda
+  debounce bilan /api/ai/similar so'raladi (public/js/features.js#onSubTitleInput).
+- Yechim UI: post-title'da "✓ Yechilgan" belgisi, izohda "✓ Yechim deb belgilash"
+  tugmasi (faqat post egasi/admin), ekspert taklifi bildirishnomasi maxsus
+  ko'rinishda (public/js/features.js#loadNotifs).

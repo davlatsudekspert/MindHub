@@ -45,7 +45,7 @@ function buildPost(p, isDetail = false) {
       </span>
       ${p.flair ? `<span class="post-flair" style="color:${esc(p.ccolor||'#C8922A')};border-color:${esc(p.ccolor||'#C8922A')}44">${esc(p.flair)}</span>` : ''}
     </div>
-    <div class="post-title">${esc(p.title)}</div>
+    <div class="post-title">${esc(p.title)}${p.status==='solved' ? ` <span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:700;color:var(--grn);background:rgba(70,201,122,.12);padding:2px 7px;border-radius:20px;vertical-align:middle">✓ Yechilgan</span>` : ''}${p.cluster_id ? ` <span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:700;color:var(--gold);background:rgba(200,146,42,.1);padding:2px 7px;border-radius:20px;vertical-align:middle;cursor:pointer" onclick="event.stopPropagation();goSec('cluster');openCluster('${p.cluster_id}')">🔥 ${fmtNum(p.cluster_size)} kishi</span>` : ''}</div>
     ${p.link ? `<div class="post-link-tag">${IC.link} <a href="${esc(p.link)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(p.link.length>60?p.link.slice(0,60)+'...':p.link)}</a></div>` : ''}
     ${mediaHtml}
     ${p.body && !isDetail ? `<div class="post-preview">${esc(p.body)}</div>` : ''}
@@ -215,10 +215,12 @@ async function openPost(id) {
           <textarea class="inp" id="root-ta" placeholder="Izoh yozing..." rows="3" style="margin-bottom:8px;resize:vertical"></textarea>
           <div style="display:flex;justify-content:flex-end"><button class="btn btn-gold" onclick="submitRootCmt('${id}')">Yuborish</button></div>
         </div>`;
+      _curPostOwnerId = post.user_id;
       renderComments(post.comments || [], cc, id);
     }
   } catch(e) { if(pd) pd.innerHTML = emptyEl('close','Topilmadi',e.message); }
 }
+let _curPostOwnerId = null;
 
 function setupMediaInDetail(container) {
   // Audio players in detail view need setup after DOM insert
@@ -345,8 +347,10 @@ function renderChildComments(children, allComments, container, postId) {
 function buildCmtNode(c, postId, depth = 0) {
   const isMine = c.user_id === window._me?.id;
   const uV = c.my_vote === 1, dV = c.my_vote === -1;
+  const canMarkSolution = window._me && (_curPostOwnerId === window._me.id || window._me.is_admin) && !c.is_deleted;
   return `
-<div class="cmt d${Math.min(depth,4)}" id="cmt-${c.id}">
+<div class="cmt d${Math.min(depth,4)}" id="cmt-${c.id}"${c.is_solution ? ' style="border-left:3px solid var(--grn);background:rgba(70,201,122,.06);border-radius:var(--r)"' : ''}>
+  ${c.is_solution ? `<div style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:800;color:var(--grn);background:rgba(70,201,122,.15);padding:3px 9px;border-radius:20px;margin-bottom:6px">✓ YECHIM</div>` : ''}
   <div class="cmt-hd">
     <div class="av" style="width:24px;height:24px;font-size:9px;border-radius:50%;background:${esc(c.color||'#C8922A')};flex-shrink:0">
       ${c.avatar?`<img src="${esc(c.avatar)}" style="width:100%;height:100%;object-fit:cover" alt="">`:`<span style="color:#fff">${initials(c.username)}</span>`}
@@ -362,6 +366,9 @@ function buildCmtNode(c, postId, depth = 0) {
     </button>
     <button class="ca dn${dV?' voted':''}" onclick="voteCmt('${c.id}',-1,this)">${IC.dn}</button>
     <button class="ca" onclick="toggleReplyForm('${c.id}')">↩ Javob</button>
+    ${canMarkSolution ? (c.is_solution
+      ? `<button class="ca" onclick="unmarkCmtSolution('${c.id}','${postId}')">✕ Yechimni bekor qilish</button>`
+      : `<button class="ca" onclick="markCmtSolution('${c.id}','${postId}')">✓ Yechim deb belgilash</button>`) : ''}
     ${isMine&&!c.is_deleted?`<button class="ca ca-del" onclick="delCmt('${c.id}')">🗑</button>`:''}
   </div>
   <div class="reply-form" id="rf-${c.id}">
@@ -373,6 +380,21 @@ function buildCmtNode(c, postId, depth = 0) {
   </div>
   <div class="cmt-children" id="rc-${c.id}"></div>
 </div>`;
+}
+
+async function markCmtSolution(cid, postId) {
+  try {
+    await API.markSolution(cid);
+    toast('✓ Yechim deb belgilandi');
+    openPost(postId);
+  } catch (e) { toast(e.message); }
+}
+async function unmarkCmtSolution(cid, postId) {
+  try {
+    await API.unmarkSolution(cid);
+    toast('Yechim belgisi bekor qilindi');
+    openPost(postId);
+  } catch (e) { toast(e.message); }
 }
 
 async function voteCmt(id, vote, btn) {

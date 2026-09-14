@@ -297,8 +297,46 @@ async function doEditCom() {
 }
 
 /* ═══ SUBMIT POST ═══ */
+let _subKind = 'post';
+function setSubKind(k) {
+  _subKind = k;
+  document.querySelectorAll('.sub-kind-btn').forEach(b => {
+    const active = b.dataset.kind === k;
+    b.classList.toggle('active', active);
+    b.style.background = active ? 'var(--gold)' : 'var(--bg2)';
+    b.style.color = active ? '#fff' : 'inherit';
+    b.style.borderColor = active ? 'var(--gold)' : 'var(--border2)';
+  });
+  onSubTitleInput(); // kind o'zgarganda dublikat tekshiruvini yangilash
+}
+
+const onSubTitleInput = debounce(async () => {
+  const box = document.getElementById('sub-similar-box');
+  if (!box) return;
+  if (_subKind !== 'problem' && _subKind !== 'idea') { box.style.display = 'none'; return; }
+  const title = (document.getElementById('sub-title')?.value || '').trim();
+  if (title.length < 10) { box.style.display = 'none'; return; }
+  try {
+    const body = (document.getElementById('sub-body')?.value || '').trim();
+    const d = await API.aiSimilar(title, body);
+    if (!d.clusters || !d.clusters.length) { box.style.display = 'none'; return; }
+    const top = d.clusters[0];
+    box.style.display = 'block';
+    box.innerHTML = `
+      <div style="background:var(--bg2);border:1px solid var(--gold-bd,var(--border2));border-radius:var(--r);padding:12px 14px">
+        <div style="font-size:13px;font-weight:700;margin-bottom:4px">🔎 Bu muammo allaqachon ${fmtNum(top.member_count)} marta ko'tarilgan</div>
+        <div style="font-size:12px;color:var(--tx3);margin-bottom:10px">"${esc(top.title)}" mavzusiga o'xshaydi. Mavjud muhokamaga qo'shilasizmi?</div>
+        <div style="display:flex;gap:8px">
+          <button type="button" class="btn btn-gold" style="flex:1;font-size:12px;padding:7px" onclick="closeSubmit();goSec('cluster');openCluster('${top.id}')">Mavjud muhokamaga qo'shilish</button>
+          <button type="button" class="btn btn-ghost" style="flex:1;font-size:12px;padding:7px" onclick="document.getElementById('sub-similar-box').style.display='none'">Baribir yangi post yozish</button>
+        </div>
+      </div>`;
+  } catch { box.style.display = 'none'; }
+}, 500);
+
 function openSubmit(comSlug) {
   _subTab = 'text';
+  setSubKind('post');
   pauseAllVideos();
   document.querySelectorAll('.sub-tab').forEach(b=>b.classList.toggle('active',b.dataset.t==='text'));
   document.querySelectorAll('.sub-form').forEach(f=>f.classList.toggle('active',f.dataset.t==='text'));
@@ -306,6 +344,8 @@ function openSubmit(comSlug) {
   if (inp && comSlug) inp.value = comSlug;
   document.getElementById('sub-title').value='';
   document.getElementById('sub-body').value='';
+  const simBox = document.getElementById('sub-similar-box');
+  if (simBox) simBox.style.display = 'none';
   // Reset polls
   resetPollForm();
   resetVidPollForm();
@@ -372,14 +412,14 @@ async function doSubmitPost() {
     if (_subTab === 'image') {
       const fi = document.getElementById('sub-img-file');
       const fd = new FormData();
-      fd.append('title',title); fd.append('community',community); fd.append('type','image');
+      fd.append('title',title); fd.append('community',community); fd.append('type','image'); fd.append('kind',_subKind);
       fd.append('body',document.getElementById('sub-body')?.value||'');
       if (fi?.files?.[0]) fd.append('image',fi.files[0]);
       post = await API.createPost(fd,true);
     } else if (_subTab === 'video') {
       const fv = document.getElementById('sub-vid-file');
       if (!fv?.files?.[0]) { toast("Video fayl tanlang"); return; }
-      if (fv.files[0].size > 500*1024*1024) { toast("Video 500MB dan oshmasin"); return; }
+      if (fv.files[0].size > 100*1024*1024) { toast("Video 100MB dan oshmasin"); return; }
       const vidFile = fv.files[0];
       const vidUrl = URL.createObjectURL(vidFile);
       const dur = await new Promise((resolve) => {
@@ -394,7 +434,7 @@ async function doSubmitPost() {
         return;
       }
       const fd = new FormData();
-      fd.append('title',title); fd.append('community',community); fd.append('type','video');
+      fd.append('title',title); fd.append('community',community); fd.append('type','video'); fd.append('kind',_subKind);
       fd.append('body',document.getElementById('sub-body')?.value||'');
       fd.append('video',fv.files[0]);
       // Append poll from vid-poll section if enabled
@@ -414,20 +454,20 @@ async function doSubmitPost() {
     } else if (_subTab === 'audio') {
       const fa = document.getElementById('sub-aud-file');
       const fd = new FormData();
-      fd.append('title',title); fd.append('community',community); fd.append('type','audio');
+      fd.append('title',title); fd.append('community',community); fd.append('type','audio'); fd.append('kind',_subKind);
       if (fa?.files?.[0]) fd.append('audio',fa.files[0]);
       post = await API.createPost(fd,true);
     } else if (_subTab === 'link') {
-      post = await API.createPost({title,community,type:'link',link:(document.getElementById('sub-link')?.value||'').trim()});
+      post = await API.createPost({title,community,type:'link',kind:_subKind,link:(document.getElementById('sub-link')?.value||'').trim()});
     } else if (_subTab === 'poll') {
       // Standalone poll
       const fd = new FormData();
-      fd.append('title',title); fd.append('community',community); fd.append('type','text');
+      fd.append('title',title); fd.append('community',community); fd.append('type','text'); fd.append('kind',_subKind);
       fd.append('body',document.getElementById('sub-body')?.value||'');
       appendPollToForm(fd);
       post = await API.createPost(fd,true);
     } else {
-      post = await API.createPost({title,community,type:'text',body:(document.getElementById('sub-body')?.value||'').trim()});
+      post = await API.createPost({title,community,type:'text',kind:_subKind,body:(document.getElementById('sub-body')?.value||'').trim()});
     }
     closeSubmit();
     toast('Post nashr qilindi! 🎉');
@@ -576,13 +616,37 @@ async function loadNotifs() {
       const dv=document.createElement('div');
       dv.className='notif'+(n.is_read?'':' unread');
       dv.style.cursor='pointer';
+      const iconMap = { follow:'👤', comment:'💬', reply:'↩️', new_post:'📝', vote:'⬆️', expert_invite:'🎯', solution_found:'✅', cluster_match:'🔥', cluster_grew:'📈' };
+
+      if (n.type === 'expert_invite') {
+        dv.style.background = 'rgba(200,146,42,.06)';
+        dv.style.borderLeft = '3px solid var(--gold)';
+        const title = (n.msg||'').split(': ').slice(1).join(': ') || n.msg;
+        const prefill = encodeURIComponent(`Salom! Sizning "${title}" muammoyingiz bo'yicha yordam bera olaman.`);
+        dv.innerHTML = `
+          <div class="notif-ico" style="background:${esc(n.fc||'#C8922A')}22">
+            <span style="font-size:16px">🎯</span>
+          </div>
+          <div style="flex:1">
+            <div class="notif-txt">${esc(n.msg)}</div>
+            <div class="notif-ago">${n.ago||''}</div>
+            <div style="display:flex;gap:8px;margin-top:8px" onclick="event.stopPropagation()">
+              <button class="btn btn-gold" style="font-size:11px;padding:5px 10px" onclick="markNotifs();openPost('${n.post_id}')">Izoh yozish</button>
+              <button class="btn btn-ghost" style="font-size:11px;padding:5px 10px" onclick="markNotifs();startChatWithPrefill('${esc(n.fn||'')}','${prefill}')">Xabar yuborish</button>
+              <button style="font-size:11px;color:var(--tx4);background:none;border:none;cursor:pointer;margin-left:auto" onclick="event.stopPropagation();disableExpertInvites()">Kerak emas</button>
+            </div>
+          </div>
+          ${!n.is_read?'<div class="notif-udot"></div>':''}`;
+        el.appendChild(dv);
+        return;
+      }
+
       // Clicking notification navigates to relevant content
       dv.onclick = () => {
         markNotifs();
         if (n.type==='follow' && n.from_id) openUser(n.fn || n.from_id);
         else if (n.post_id) openPost(n.post_id);
       };
-      const iconMap = { follow:'👤', comment:'💬', reply:'↩️', new_post:'📝', vote:'⬆️' };
       dv.innerHTML = `
         <div class="notif-ico" style="background:${esc(n.fc||'#C8922A')}22">
           ${n.fa ? `<img src="${esc(n.fa)}" style="width:34px;height:34px;border-radius:9px;object-fit:cover" alt="">` : `<span style="font-size:16px">${iconMap[n.type]||'🔔'}</span>`}
@@ -595,6 +659,14 @@ async function loadNotifs() {
       el.appendChild(dv);
     });
   } catch(e) { el.innerHTML=emptyEl('close','Xatolik',e.message); }
+}
+
+async function disableExpertInvites() {
+  try {
+    await API.updNotifPrefs({ expert_invite: false });
+    toast("Endi ekspert takliflari kelmaydi");
+    loadNotifs();
+  } catch (e) { toast(e.message); }
 }
 
 async function markNotifs() {
@@ -1255,12 +1327,37 @@ async function openUser(param) {
           </div>
         </div>
       </div>
+      <div id="user-problem-profile"></div>
       <div class="sr-hd">Postlari</div>
       <div id="user-posts-cnt"></div>`;
     const pc=document.getElementById('user-posts-cnt');
     if(!u.posts?.length) pc.innerHTML=emptyEl('save',"Hali post yo'q");
     else u.posts.forEach((p,i)=>{const d=document.createElement('div');d.innerHTML=buildPost(p);const c=d.firstElementChild;c.style.animationDelay=(i*.04)+'s';pc.appendChild(c);});
+    loadProblemProfile(u.id);
   } catch(e){el.innerHTML=emptyEl('close','Topilmadi',e.message);}
+}
+
+async function loadProblemProfile(userId) {
+  const el = document.getElementById('user-problem-profile');
+  if (!el) return;
+  try {
+    const p = await API.problemProfile(userId);
+    if (!p.total_clusters) return; // hech qanday muammoda qatnashmagan — bo'lim ko'rsatilmaydi
+    el.innerHTML = `
+      <div class="post-card" style="margin-bottom:14px">
+        <div style="font-size:14px;font-weight:700;margin-bottom:10px">🎯 Muammo profili</div>
+        <div style="display:flex;gap:24px;margin-bottom:10px">
+          <div><div style="font-size:22px;font-weight:800;color:var(--gold);font-family:'Syne',sans-serif">${fmtNum(p.total_clusters)}</div><div style="font-size:11px;color:var(--tx3)">muammo ko'targan</div></div>
+          <div><div style="font-size:22px;font-weight:800;color:var(--grn);font-family:'Syne',sans-serif">${fmtNum(p.solved_count)}</div><div style="font-size:11px;color:var(--tx3)">yechilgan</div></div>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+          ${p.clusters.slice(0,8).map(c => `
+            <span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:4px 10px;border-radius:20px;cursor:pointer;background:${c.status==='solved'?'rgba(70,201,122,.12)':'var(--bg2)'};color:${c.status==='solved'?'var(--grn)':'inherit'}" onclick="goSec('cluster');openCluster('${c.id}')">
+              ${c.status==='solved'?'✓':'🔥'} ${esc(c.title)}
+            </span>`).join('')}
+        </div>
+      </div>`;
+  } catch { /* muammo profilini yuklab bo'lmasa, jim o'tkazib yuboriladi */ }
 }
 
 async function followUser(id,btn) {
@@ -1299,6 +1396,17 @@ async function startChat(username){
   goSec('msgs');
   try{const u=await API.getUser(username);await loadConvos();await new Promise(r=>setTimeout(r,80));openChat(u);}
   catch(e){toast(e.message||'Xabar ochishda xatolik');}
+}
+
+// Ekspert taklifi kartasidagi "Xabar yuborish" tugmasi uchun — chatni ochib,
+// yozish maydonini oldindan to'ldirilgan matn bilan to'ldiradi
+async function startChatWithPrefill(username, encodedPrefill) {
+  if (!username) return;
+  await startChat(username);
+  setTimeout(() => {
+    const inp = document.getElementById('chat-inp');
+    if (inp) { inp.value = decodeURIComponent(encodedPrefill || ''); inp.focus(); }
+  }, 300);
 }
 
 /* ═══ SETTINGS ═══ */

@@ -54,7 +54,7 @@ function goSec(id) {
   if (id !== 'search') { const mb = document.getElementById('mobile-search-bar'); if (mb) mb.classList.remove('open'); }
   window.scrollTo(0,0);
   // Update bottom nav
-  const bnMap = { home:'bn-home', popular:'bn-popular', notifs:'bn-notifs', msgs:'bn-msgs', user:'bn-profile' };
+  const bnMap = { home:'bn-home', popular:'bn-popular', notifs:'bn-notifs', msgs:'bn-msgs', user:'bn-profile', trends:'bn-trends' };
   document.querySelectorAll('.bn-item[id]').forEach(b => b.classList.remove('active'));
   const bnId = bnMap[id];
   if (bnId) document.getElementById(bnId)?.classList.add('active');
@@ -141,6 +141,19 @@ const API = {
   adminStats:()        => api('GET','/admin/stats'),
   adminAction:(b)      => api('POST','/admin/action',b),
   adminResolve:(id,s)  => api('POST','/admin/reports/'+id,{status:s}),
+
+  /* FAZA 3: AI klasterlar */
+  clusters:  (sort,cursor)  => api('GET',`/clusters?sort=${sort||'hot'}&cursor=${cursor||0}`),
+  cluster:   (id,offset)    => api('GET',`/clusters/${id}?offset=${offset||0}`),
+  aiSimilar: (title,body)   => api('POST','/ai/similar',{title,body}),
+  statsProblems: ()         => api('GET','/stats/problems'),
+  problemProfile:(userId)   => api('GET',`/users/${userId}/problem-profile`),
+
+  /* FAZA 4: Yechim va ekspert taqsimlash */
+  markSolution:  (cmtId)    => api('POST',`/comments/${cmtId}/solution`),
+  unmarkSolution:(cmtId)    => api('DELETE',`/comments/${cmtId}/solution`),
+  notifPrefs:    ()         => api('GET','/me/notif-prefs'),
+  updNotifPrefs: (b)        => api('PUT','/me/notif-prefs',b),
 };
 
 /* ═══ WEBSOCKET ═══ */
