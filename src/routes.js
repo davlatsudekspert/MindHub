@@ -1,6 +1,5 @@
 'use strict';
 const crypto = require('crypto');
-const fs   = require('fs');
 const path = require('path');
 const url  = require('url');
 const { Q, db } = require('./db');
@@ -8,12 +7,10 @@ const { verifyToken, makeToken, uid, randColor, hashPassword, verifyPassword, is
 const ws = require('./ws');
 const { corsHeaders } = require('./cors');
 const { checkRateLimit, checkRateLimitByUser, getClientIp } = require('./ratelimit');
+const storage = require('./storage');
 
 function sha256Hex(s) { return crypto.createHash('sha256').update(String(s)).digest('hex'); }
 
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
-const UPLOAD   = path.join(DATA_DIR, 'uploads');
-if (!fs.existsSync(UPLOAD)) fs.mkdirSync(UPLOAD, { recursive: true });
 const tgPendingProfiles = new Map();
 
 /* ── helpers ── */
@@ -163,16 +160,21 @@ function checkMagicBytes(buf, ext) {
   }
 }
 
-function saveFile(fileObj, allowedExts, kind = 'image') {
+// STORAGE_DRIVER=local (standart) yoki r2 (Cloudflare R2) — src/storage.js orqali.
+// null qaytsa — fayl yaroqsiz (kengaytma/hajm/imzo) yoki yuklashda xatolik.
+async function saveFile(fileObj, allowedExts, kind = 'image') {
   if (!fileObj || !fileObj.data || fileObj.data.length === 0) return null;
   const ext = fileObj.ext.toLowerCase();
   if (allowedExts && !allowedExts.includes(ext)) return null;
   const maxSize = UPLOAD_SIZE_LIMITS[kind] || UPLOAD_SIZE_LIMITS.image;
   if (fileObj.data.length > maxSize) return null;
   if (!checkMagicBytes(fileObj.data, ext)) return null;
-  const fn = uid() + ext;
-  fs.writeFileSync(path.join(UPLOAD, fn), fileObj.data);
-  return `/uploads/${fn}`;
+  try {
+    return await storage.save(fileObj.data, ext);
+  } catch (e) {
+    console.error('saveFile (storage):', e.message);
+    return null;
+  }
 }
 function ago(ts) {
   const d = Math.floor(Date.now()/1000) - ts;
@@ -534,7 +536,7 @@ async function route(req, res) {
   if (p === '/api/me/avatar' && m === 'POST') {
     const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     const { files } = await parseMultipart(req);
-    const img = saveFile(files.image, ['.jpg','.jpeg','.png','.gif','.webp']);
+    const img = await saveFile(files.image, ['.jpg','.jpeg','.png','.gif','.webp']);
     if (!img) return json(res, { error: 'Rasm yuklanmadi' }, 400);
     await Q.uUpdAv(img, u2);
     return json(res, { avatar: img });
@@ -542,7 +544,7 @@ async function route(req, res) {
   if (p === '/api/me/banner' && m === 'POST') {
     const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     const { files } = await parseMultipart(req);
-    const img = saveFile(files.image, ['.jpg','.jpeg','.png','.gif','.webp']);
+    const img = await saveFile(files.image, ['.jpg','.jpeg','.png','.gif','.webp']);
     if (!img) return json(res, { error: 'Rasm yuklanmadi' }, 400);
     await Q.uUpdBanner(img, u2);
     return json(res, { banner: img });
@@ -721,8 +723,8 @@ async function route(req, res) {
       rules = (fields.rules || com.rules || '').trim();
       color = fields.color || com.color;
       if (fields.is_private !== undefined) is_private = fields.is_private === 'true' || fields.is_private === '1' ? 1 : 0;
-      if (files.avatar) { const r = saveFile(files.avatar,['.jpg','.jpeg','.png','.webp']); if(r) avatar=r; }
-      if (files.banner) { const r = saveFile(files.banner,['.jpg','.jpeg','.png','.webp']); if(r) banner=r; }
+      if (files.avatar) { const r = await saveFile(files.avatar,['.jpg','.jpeg','.png','.webp']); if(r) avatar=r; }
+      if (files.banner) { const r = await saveFile(files.banner,['.jpg','.jpeg','.png','.webp']); if(r) banner=r; }
     } else {
       const b = await readBody(req);
       name  = (b.name  || com.name).trim();
@@ -884,13 +886,13 @@ async function route(req, res) {
       pollQuestion = fields.poll_question || null;
       pollOptions  = fields.poll_options  ? JSON.parse(fields.poll_options) : null;
       pollDays     = parseInt(fields.poll_days) || 3;
-      if (files.image) { image = saveFile(files.image,['.jpg','.jpeg','.png','.gif','.webp','.heic'],'image'); type='image'; }
+      if (files.image) { image = await saveFile(files.image,['.jpg','.jpeg','.png','.gif','.webp','.heic'],'image'); type='image'; }
       if (files.video) {
-        video = saveFile(files.video,['.mp4','.webm','.mov','.avi','.mkv'],'video');
+        video = await saveFile(files.video,['.mp4','.webm','.mov','.avi','.mkv'],'video');
         if (!video) return json(res, { error: "Video: 100MB gacha, qo'llab-quvvatlanadigan format kerak" }, 400);
         type='video';
       }
-      if (files.audio) { audio = saveFile(files.audio,['.mp3','.wav','.ogg','.m4a','.aac','.webm'],'audio'); type='audio'; }
+      if (files.audio) { audio = await saveFile(files.audio,['.mp3','.wav','.ogg','.m4a','.aac','.webm'],'audio'); type='audio'; }
     } else {
       const b  = await readBody(req);
       title    = (b.title    || '').trim();
@@ -1280,7 +1282,7 @@ async function route(req, res) {
     if (!toId) return json(res, { error: "Qabul qiluvchi ko'rsatilmagan" }, 400);
     const vf = files.voice || files.audio;
     if (!vf || !vf.data || vf.data.length === 0) return json(res, { error: 'Audio topilmadi' }, 400);
-    const audioUrl = saveFile({ data: vf.data, ext: '.webm' }, ['.webm'], 'audio');
+    const audioUrl = await saveFile({ data: vf.data, ext: '.webm' }, ['.webm'], 'audio');
     if (!audioUrl) return json(res, { error: 'Yaroqsiz audio fayli' }, 400);
     const duration = fields.duration || '0:00';
     const mid = uid();
@@ -1302,7 +1304,7 @@ async function route(req, res) {
     if (!toId) return json(res, { error: "Qabul qiluvchi ko'rsatilmagan" }, 400);
     const imgFile = files.image;
     if (!imgFile || !imgFile.data || imgFile.data.length === 0) return json(res, { error: 'Rasm topilmadi' }, 400);
-    const imgUrl = saveFile(imgFile, ['.jpg','.jpeg','.png','.gif','.webp']);
+    const imgUrl = await saveFile(imgFile, ['.jpg','.jpeg','.png','.gif','.webp']);
     if (!imgUrl) return json(res, { error: 'Yaroqsiz rasm formati' }, 400);
     const mid = uid();
     await Q.msgInsert(mid, u2, toId, '[Rasm]', 'image', imgUrl, null, null);

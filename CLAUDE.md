@@ -21,7 +21,9 @@ ichida g'oya va muammolarini ulashadi, izoh va reaksiya qoldiradi, shaxsiy xabar
 ## Env o'zgaruvchilar
 DATABASE_URL, SECRET, PORT, DATA_DIR, APP_URL, RESEND_API_KEY, MAIL_FROM,
 TELEGRAM_BOT_TOKEN, ALLOWED_ORIGINS, AI_PROVIDER, AI_API_KEY, CF_ACCOUNT_ID,
-AI_EMBED_MODEL, AI_CHAT_MODEL, CLUSTER_THRESHOLD, CLUSTER_MIN_SIZE
+AI_EMBED_MODEL, AI_CHAT_MODEL, CLUSTER_THRESHOLD, CLUSTER_MIN_SIZE,
+STORAGE_DRIVER, R2_ACCOUNT_ID, R2_BUCKET, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY,
+R2_PUBLIC_URL
 
 ## AI Fikr Taqsimlovchi (FAZA 3)
 - src/ai/provider.js — AI_PROVIDER orqali tanlanadigan embed/chat abstraksiyasi.
@@ -62,6 +64,15 @@ AI_EMBED_MODEL, AI_CHAT_MODEL, CLUSTER_THRESHOLD, CLUSTER_MIN_SIZE
 - src/ai/distribute.js — klasterga yaqin mavzularda faol foydalanuvchilarga
   taklif yuboradi (kuniga 3ta/user, postiga 5ta chegarasi bilan).
   src/ai/worker.js ai_jobs('distribute') orqali chaqiradi.
+
+## Fayl saqlash (FAZA 6)
+- src/storage.js — save(buffer,ext)/del(url), STORAGE_DRIVER='local'|'r2'.
+  R2 rejimi @aws-sdk/client-s3 ISHLATMAYDI — AWS Signature V4 qo'lda yozilgan
+  (loyihaning minimal-dependency qoidasiga mos). ⚠️ Bu qism haqiqiy R2 bucket
+  bilan hali sinalmagan (bu muhitda R2 hisobi yo'q) — production'ga qo'yishdan
+  oldin staging'da kichik fayl yuklab tekshiring.
+- scripts/migrate-uploads-to-r2.js — mavjud data/uploads fayllarini R2'ga
+  ko'chiradi (fayl nomi o'zgarmaydi, bazada faqat /uploads/ prefiksi almashadi).
 
 ## Frontend (FAZA 5)
 - public/js/trends.js — "Muammolar" (/trends) va klaster sahifasi (goSec('trends')/
