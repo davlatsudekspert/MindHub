@@ -13,7 +13,7 @@ not_found_handling = "single-page-application"
 [[d1_databases]]
 binding = "DB"
 database_name = "mindhubuz"
-database_id = "REPLACE_WITH_REAL_D1_ID"
+database_id = "6775125a-fe4f-4c40-bbcc-33c5c9747bdd"
 migrations_dir = "migrations/d1"
 
 [[r2_buckets]]
