@@ -1,14 +1,16 @@
 {
   "name": "mindhub",
   "version": "1.0.0",
-  "description": "MindHub - O'zbek Reddit",
-  "main": "server.js",
+  "description": "MindHub - O'zbek Reddit (Cloudflare Workers + D1 + R2)",
+  "main": "worker/index.js",
   "scripts": {
-    "start": "node server.js",
-    "test": "node --test --test-concurrency=1"
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "migrate:local": "wrangler d1 migrations apply mindhub --local",
+    "migrate:remote": "wrangler d1 migrations apply mindhub --remote"
   },
-  "dependencies": {
-    "pg": "^8.13.1"
+  "devDependencies": {
+    "wrangler": "^4.131.2"
   },
   "engines": {
     "node": ">=22.0.0"

@@ -2,28 +2,156 @@
 MindHub — o'zbek tilidagi ijtimoiy platforma (Reddit uslubida). Odamlar jamoalar (community)
 ichida g'oya va muammolarini ulashadi, izoh va reaksiya qoldiradi, shaxsiy xabar yozadi.
 
-## Stack
-- Backend: sof Node.js 22+, `http` moduli (Express YO'Q — qo'shmang)
-- DB: PostgreSQL, `pg` kutubxonasi. Barcha querylar src/db.js ichidagi Q obyektida
-- WebSocket: src/ws.js dagi qo'lda yozilgan implementatsiya
+## Stack (2026: Cloudflare'ga to'liq ko'chirildi — Railway/PostgreSQL EMAS)
+- Backend: Cloudflare Workers (worker/index.js kirish nuqtasi). Biznes-mantiq
+  (src/routes.js#route(req,res)) Node http.Server uslubidagi req/res
+  interfeysida yozilgan bo'lib qoladi — worker/index.js buni Workers
+  Request/Response'ga moslashtiruvchi "shim" orqali chaqiradi (pastdagi
+  "Cloudflare Workers migratsiyasi" bo'limiga qarang).
+- DB: Cloudflare D1 (SQLite). Barcha querylar src/db.js ichidagi Q obyektida —
+  SQL matni ko'p joyda Postgres uslubida yozilgan qoladi (masalan $1, ::int),
+  chunki src/db.js#toD1() bularni avtomatik SQLite-mos shaklga o'giradi.
+- Fayl saqlash: Cloudflare R2 (binding orqali, src/storage.js).
+- WebSocket: Cloudflare Durable Object (src/ws-do.js — haqiqiy ish shu yerda;
+  src/ws.js esa routes.js uchun moslik qatlami, DO'ga HTTP orqali murojaat qiladi).
 - Frontend: vanilla JS, build step yo'q. public/js/{core,posts,features,app}.js
-- Deploy: Railway
+  (o'zgarishsiz — Workers Assets binding orqali xizmat qiladi).
+- Deploy: `wrangler deploy` (Railway ENDI ISHLATILMAYDI — server.js/src/migrate.js
+  eski Node/Postgres yo'li endi FUNKSIONAL EMAS, chunki src/db.js D1-ga
+  moslashtirilgan; ular faqat tarixiy ma'lumot sifatida qolgan).
 
 ## Qoidalar
 - Barcha UI matni va xato xabarlari O'ZBEK TILIDA (lotin alifbosida)
-- Yangi SQL query qo'shsang — src/db.js dagi Q obyektiga qo'sh, route ichida inline yozma
+- Yangi SQL query qo'shsang — src/db.js dagi Q obyektiga qo'sh, route ichida
+  inline yozma. Postgres uslubidagi SQL yozishda davom etilsa ham bo'ladi
+  ($1,$2, ::int cast) — toD1() buni avtomatik SQLite'ga o'giradi (lekin ANY(),
+  CURRENT_DATE arifmetikasi, DISTINCT ON kabi Postgres-ga XOS narsalar
+  AVTOMATIK O'GIRILMAYDI — pastdagi bo'limga qara)
 - Barcha query parametrli bo'lsin ($1, $2) — string konkatenatsiya QILMA
 - Frontendda foydalanuvchi matnini innerHTML ga qo'yishdan oldin esc() dan o'tkaz
 - Yangi dependency qo'shishdan oldin so'ra. Loyiha ataylab minimal dependency bilan yozilgan
 - Fayl oxiri CRLF (\r\n) — mavjud fayllarni tahrirlaganda buzma
-- Har bir o'zgarishdan keyin `node -c` yoki `node --check` bilan sintaksisni tekshir
+- Har bir o'zgarishdan keyin `node -c` yoki `node --check` bilan sintaksisni
+  tekshir. ⚠️ worker/index.js ESM sintaksisda (export default/export class) —
+  node --check buni CommonJS deb tushunib xato beradi, bu FAYL uchun
+  `npx wrangler deploy --dry-run` (yoki `wrangler dev` + so'rov yuborish)
+  haqiqiy tekshiruv hisoblanadi.
+- Cloudflare Workers'da GLOBAL scope'da setInterval/setTimeout/fetch/
+  crypto.randomUUID() kabi async/random operatsiyalar TAQIQLANGAN ("Disallowed
+  operation called within global scope") — faqat handler ichida (fetch/
+  scheduled/DO metodlari) chaqiriladi. Bu real bug sifatida topilgan edi:
+  src/ratelimit.js'da module-level `setInterval(...)` bo'lgani uchun butun
+  Worker ishga tushmay qolgan — endi opportunistic (har chaqiruvda vaqt
+  tekshirib) tozalashga almashtirilgan.
 
-## Env o'zgaruvchilar
-DATABASE_URL, SECRET, PORT, DATA_DIR, APP_URL, RESEND_API_KEY, MAIL_FROM,
-TELEGRAM_BOT_TOKEN, ALLOWED_ORIGINS, AI_PROVIDER, AI_API_KEY, CF_ACCOUNT_ID,
-AI_EMBED_MODEL, AI_CHAT_MODEL, CLUSTER_THRESHOLD, CLUSTER_MIN_SIZE,
-STORAGE_DRIVER, R2_ACCOUNT_ID, R2_BUCKET, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY,
-R2_PUBLIC_URL
+## Env o'zgaruvchilar (Cloudflare Workers)
+- **Binding'lar** (wrangler.toml'da statik e'lon qilinadi, secret emas):
+  `DB` (D1), `R2` (R2 bucket), `WSHUB` (Durable Object namespace, class WsHub),
+  `ASSETS` (Workers Assets — public/ papkasi).
+- **`wrangler secret put NOM`** orqali qo'yiladigan maxfiy qiymatlar: `SECRET`
+  (majburiy — token imzolash uchun), `RESEND_API_KEY`, `AI_API_KEY`,
+  `TELEGRAM_BOT_TOKEN`.
+- **`[vars]`** (wrangler.toml, maxfiy emas): `APP_URL`, `MAIL_FROM`,
+  `ALLOWED_ORIGINS`, `AI_PROVIDER`, `CF_ACCOUNT_ID`, `AI_EMBED_MODEL`,
+  `AI_CHAT_MODEL`, `CLUSTER_THRESHOLD`, `CLUSTER_MIN_SIZE`, `STORAGE_DRIVER`
+  (default endi `'r2'`, Node/Railway davridagi `'local'` emas).
+- ⚠️ `DATABASE_URL`, `PORT`, `DATA_DIR`, `R2_ACCOUNT_ID`, `R2_BUCKET`,
+  `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_PUBLIC_URL` — ENDI KERAK
+  EMAS (Postgres connection string va hand-rolled R2 SigV4 kalitlari edi,
+  D1/R2 binding'lari ularning o'rnini bosadi).
+- Lokal test uchun: `.dev.vars` fayliga `SECRET=...` yoz (`.gitignore`da,
+  repo'ga tushmaydi).
+
+## Cloudflare Workers migratsiyasi (Railway/Postgres'dan to'liq ko'chirish)
+- **Nega**: foydalanuvchi talabi bilan — Railway/Postgres o'rniga to'liq
+  Cloudflare (Workers+D1+R2) ustida ishlashi kerak.
+- **worker/index.js** — kirish nuqtasi (ESM: `export default {fetch,scheduled}`,
+  `export {WsHub}`). `fetch()` ichida: WebSocket so'rovlarini DO'ga proksi
+  qiladi, `/uploads/:key`ni R2 binding orqali (Range support bilan) xizmat
+  qiladi, `/api/*`ni Node-uslubidagi req/res "shim" orqali
+  `src/routes.js#route(req,res)`ga uzatadi (1600+ qatorlik biznes-mantiq
+  O'ZGARTIRILMAGAN — faqat HTTP qatlami moslashtirilgan), qolganini Workers
+  Assets binding orqali (public/) xizmat qiladi. `scheduled()` — Cron Trigger
+  (har daqiqada), src/cron.js#runScheduled + src/ai/worker.js#tick ni chaqiradi
+  (Node'dagi setInterval-asosli fon jarayonlar o'rnini bosadi).
+- **src/env.js** — Workers binding'lari (env) va ctx.waitUntil faqat
+  fetch(request,env,ctx) ichida beriladi, module yuklanganda mavjud emas.
+  setEnv(env,ctx)/getEnv()/waitUntil() — bitta isolyat davomida shu holatni
+  saqlaydigan kichik singleton (src/db.js, src/helpers.js#SECRET,
+  src/storage.js, src/ws.js shu orqali binding'larga kiradi).
+- **src/db.js#toD1()** — Postgres SQL matnini SQLite (D1)ga avtomatik
+  moslashtiradi: `$N`->`?` (qiymatlar tartibi bilan, takroriy $N'lar ham
+  to'g'ri), `::int`/`::text[]`/`::double precision` kabi FAQAT aniq
+  ro'yxatdagi cast'lar olib tashlanadi (⚠️ ochiq `[a-zA-Z ]+` regex avval
+  "IS NULL OR" kabi so'zlarni ham yutib yuborgan — haqiqiy bug, wrangler dev
+  orqali topilgan va qattiq ro'yxatga almashtirilgan), `extract(epoch from
+  now())`->`unixepoch()`, `greatest(`->`max(`. AVTOMATIK O'GIRILMAYDIGAN
+  narsalar har bir Q funksiyasida QO'LDA qayta yozilgan:
+  - `ANY($N::text[])` (massiv parametr) — SQLite'da yo'q, `IN (?,?,...)`
+    dinamik ro'yxatiga (inClause() yordamchisi) almashtirilgan (~12 ta
+    `*Batch` funksiya: pvGetBatch, svCheckBatch, memCheckBatch va h.k.)
+  - `CURRENT_DATE` arifmetikasi (`CURRENT_DATE-7`, `CURRENT_DATE-$N`) — JS'da
+    hisoblab, oddiy $N sifatida uzatiladi (cdIncr, cdSeries, clListRanked,
+    stTrending)
+  - To'liq matnli qidiruv (pSearch) — Postgres tsvector/GIN/plainto_tsquery
+    o'rniga SQLite FTS5 virtual jadval (`posts_fts`, migrations/d1/0005,
+    posts bilan trigger orqali sinxron). bm25() natijasi kichik=yaxshi
+    (ts_rank'ning teskarisi) — ORDER BY ASC.
+  - `DISTINCT ON (post_id)` (clmByPostIdBatch) — SQLite qo'llab-quvvatlamaydi,
+    oddiy SELECT'ga soddalashtirilgan (chaqiruvchi Map orqali dublikatlarni
+    baribir yig'adi).
+  - `FOR UPDATE SKIP LOCKED` (ai_jobs navbati) — D1 yagona yozuvchi modeliga
+    ega, shuning uchun oddiy atomik `UPDATE...WHERE id IN (SELECT...) RETURNING`
+    (Q.ajClaimBatch) yetarli, alohida tranzaksiya/qulf shart emas.
+- **migrations/d1/*.sql** — D1 migratsiyalari (`wrangler d1 migrations apply`),
+  Postgres migrations/*.sql'dan ALOHIDA (SQLite sintaksisida, yakuniy shaklda
+  to'g'ridan-to'g'ri yaratilgan — Postgres'dagi kabi bosqichma-bosqich ALTER
+  TABLE tarixi yo'q, chunki D1 bazasi noldan boshlanadi). Node versiyasidagi
+  kabi server ishga tushganda AVTOMATIK ishlamaydi — deploy vaqtida qo'lda/CI
+  orqali qo'llanadi (`npm run migrate:local` / `migrate:remote`).
+- **src/ws-do.js** (Durable Object "WsHub") — src/ws.js'dagi eski xom TCP
+  socket implementatsiyasi o'rnini bosadi. Hibernatable WebSockets API
+  (`state.acceptWebSocket`) ishlatiladi — DO faol emasligida CPU/xotira
+  sarflamaydi. Bitta singleton DO instansi ("hub" nomi bilan) BARCHA
+  ulanishlarni ushlaydi va foydalanuvchi ID bo'yicha (WebSocket "tag"lari
+  orqali) yo'naltiradi. src/ws.js endi faqat DO'ga HTTP so'rov yuboruvchi
+  moslik qatlami (sendTo/sendAll/isOnline) — routes.js buni o'zgarishsiz
+  chaqiraveradi. ⚠️ sendTo/sendAll routes.js'da odatda `await`siz chaqiriladi
+  (fire-and-forget) — javob mijozga qaytarilgandan keyin ham so'rov
+  tugashini kafolatlash uchun src/env.js#waitUntil(ctx.waitUntil) ishlatiladi.
+- **src/storage.js** — R2 uchun ilgari qo'lda yozilgan AWS Signature V4
+  (@aws-sdk/client-s3'siz, Node/Railway'dan R2'ga tashqi HTTP so'rovi
+  sifatida) olib tashlandi — Workers'da R2 binding (`env.R2.put/get/delete`)
+  to'g'ridan-to'g'ri, tezroq va xavfsizroq ishlaydi. Yuklangan fayllar R2
+  "public" qilinishi yoki alohida domen ulanishi SHART EMAS — worker/index.js
+  ularni `/uploads/:key` orqali R2 binding'dan o'qib beradi (Range so'rovlar —
+  video/audio seek — bilan birga).
+- **Cloudflare Workers'ning global-scope cheklovi**: setInterval/setTimeout/
+  fetch/crypto.randomUUID() kabi operatsiyalar faqat handler ICHIDA
+  chaqirilishi mumkin — module yuklanganda (global scope) chaqirilsa Worker
+  butunlay ishga tushmay qoladi ("Disallowed operation called within global
+  scope"). Bu HAQIQIY BUG sifatida topildi: src/ratelimit.js'da module-level
+  `setInterval(...)` bor edi (Map tozalash uchun) — endi har `check()`
+  chaqiruvida vaqt tekshirilib, ehtimollik asosida (opportunistic)
+  tozalanadi, alohida timer YO'Q.
+- **Bilib qo'yish kerak bo'lgan cheklovlar (texnik qarz, hal qilinmagan)**:
+  - src/ratelimit.js'dagi in-memory Map faqat BITTA isolyat ichida — Workers
+    ko'p isolyatga tarqatadi, shuning uchun rate limit "eng yaxshi urinish"
+    darajasida (global emas). To'liq to'g'ri bo'lishi uchun Durable
+    Object/D1 asosidagi hisoblagich kerak bo'ladi.
+  - **test/*.js (`npm test`) ENDI ISHLAMAYDI** — eski test/_helpers.js
+    to'g'ridan-to'g'ri `require('../src/db')`ga tayanadi, u endi D1 binding
+    (`getEnv()`) so'raydi va Worker konteksti tashqarisida xato beradi.
+    Yangi testlar Miniflare/wrangler'ning Node API'si orqali yozilishi kerak
+    — bu hali qilinmagan.
+  - server.js, src/migrate.js — eski Node/Railway/Postgres yo'li, ENDI
+    FUNKSIONAL EMAS (src/db.js D1-ga to'liq almashtirilgan). O'chirilmagan
+    (tarix uchun), lekin ishlatilmaydi.
+  - scripts/migrate-uploads-to-r2.js — eski Railway diskidan R2'ga ko'chirish
+    uchun yozilgan edi, endi kerak emas (Railway ishlatilmayapti).
+  - AI klasterlash fon ishchisi (src/ai/worker.js) endi Cron Trigger orqali
+    HAR DAQIQADA ishlaydi (Node'dagi 5 soniyalik setInterval o'rniga) —
+    AI_PROVIDER o'rnatilmagan bo'lsa (default) hech narsa qilmaydi.
 
 ## AI Fikr Taqsimlovchi (FAZA 3)
 - src/ai/provider.js — AI_PROVIDER orqali tanlanadigan embed/chat abstraksiyasi.

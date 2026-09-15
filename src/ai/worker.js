@@ -1,34 +1,18 @@
 'use strict';
-const { pool, Q } = require('../db');
+const { Q } = require('../db');
 const provider = require('./provider');
 const { processEmbedJob, processSummarizeJob, processReclusterJob } = require('./cluster');
 
-const POLL_INTERVAL_MS = 5000;
 const BATCH_SIZE = 5;
 
-// FOR UPDATE SKIP LOCKED — bir vaqtda faqat bitta worker instance bir xil
-// vazifani olmasligi uchun (ko'p instance bo'lsa ham xavfsiz).
+// Postgres versiyasida "FOR UPDATE SKIP LOCKED" bilan tranzaksiya ichida
+// qulflab olinardi (bir nechta worker instansi bir xil vazifani ikki marta
+// olib qo'ymasligi uchun). D1 yagona yozuvchi modeliga ega — bir vaqtning
+// o'zida faqat bitta yozish amali bajariladi, shuning uchun oddiy
+// UPDATE...RETURNING (Q.ajClaimBatch, src/db.js) allaqachon atomik va bu
+// yerda alohida tranzaksiya/qulf shart emas.
 async function claimJobs() {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const { rows } = await client.query(
-      `SELECT * FROM ai_jobs WHERE status='pending' AND run_after<=extract(epoch from now())::int
-       ORDER BY created_at ASC LIMIT $1 FOR UPDATE SKIP LOCKED`,
-      [BATCH_SIZE]
-    );
-    if (rows.length) {
-      const ids = rows.map(r => r.id);
-      await client.query(`UPDATE ai_jobs SET status='running' WHERE id = ANY($1::text[])`, [ids]);
-    }
-    await client.query('COMMIT');
-    return rows;
-  } catch (e) {
-    await client.query('ROLLBACK');
-    throw e;
-  } finally {
-    client.release();
-  }
+  return Q.ajClaimBatch(BATCH_SIZE);
 }
 
 async function runJob(job) {
@@ -75,13 +59,7 @@ async function tick() {
   }
 }
 
-function startAiWorker() {
-  if (!provider.enabled) {
-    console.log("ℹ️  AI_PROVIDER o'rnatilmagan — AI klasterlash o'chirilgan (ilova baribir ishlaydi)");
-    return;
-  }
-  setInterval(tick, POLL_INTERVAL_MS).unref();
-  console.log(`🤖 AI ishchi ishga tushdi (provayder: ${provider.provider}, har ${POLL_INTERVAL_MS/1000}s tekshiradi)`);
-}
-
-module.exports = { startAiWorker, tick };
+// Node/setInterval versiyasi endi yo'q — Workers'da doimiy background process
+// bo'lmaydi. Buning o'rniga worker/index.js'dagi scheduled() handler (Cron
+// Trigger, wrangler.toml'da "*/1 * * * *") har daqiqada tick()ni chaqiradi.
+module.exports = { tick };

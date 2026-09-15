@@ -680,7 +680,7 @@ async function route(req, res) {
     const following = (await Q.fwFollowing(user.id)).c;
     const is_following = u2 ? !!(await Q.fwCheck(u2, user.id)) : false;
     const is_me = u2 === user.id;
-    return json(res, { ...user, posts, followers, following, is_following, is_me, online: ws.isOnline(user.id) });
+    return json(res, { ...user, posts, followers, following, is_following, is_me, online: await ws.isOnline(user.id) });
   }
   if (p.match(/^\/api\/users\/search$/) && m === 'GET') {
     const sq = (q.q || '').toLowerCase();

@@ -1,10 +1,16 @@
 'use strict';
 const crypto = require('crypto');
-const { SECRET } = require('./db');
+// Workers'da env (shu jumladan SECRET) faqat fetch(request,env,ctx) ichida
+// beriladi — module yuklanganda hali mavjud emas. Shuning uchun bu yerda
+// require vaqtida bir marta o'qiladigan module-level konstanta o'rniga
+// getEnv().SECRET har chaqiruvda olinadi (src/env.js#setEnv worker/index.js
+// tomonidan har so'rovda chaqiriladi).
+const { getEnv } = require('./env');
+function SECRET() { return getEnv().SECRET; }
 
 function uid() { return crypto.randomUUID(); }
 function now() { return Math.floor(Date.now() / 1000); }
-function hashPass(p) { return crypto.createHmac('sha256', SECRET).update(p).digest('hex'); }
+function hashPass(p) { return crypto.createHmac('sha256', SECRET()).update(p).digest('hex'); }
 
 /* ── Cursor-asosli pagination uchun ── */
 // Ochiq (opaque) token sifatida ishlatiladi — mijoz ichini bilishi shart emas,
@@ -66,7 +72,7 @@ function verifyPassword(plain, stored) {
 // tekshiradi (bazasiz, tez) — {userId, pv} qaytaradi.
 function makeToken(userId, pv = 1) {
   const pl = Buffer.from(JSON.stringify({ userId, pv, exp: Date.now() + 14 * 864e5 })).toString('base64url');
-  const sg = crypto.createHmac('sha256', SECRET).update(pl).digest('base64url');
+  const sg = crypto.createHmac('sha256', SECRET()).update(pl).digest('base64url');
   return `${pl}.${sg}`;
 }
 
@@ -75,7 +81,7 @@ function verifyToken(tok) {
   try {
     const [pl, sg] = tok.split('.');
     if (!pl || !sg) return null;
-    if (crypto.createHmac('sha256', SECRET).update(pl).digest('base64url') !== sg) return null;
+    if (crypto.createHmac('sha256', SECRET()).update(pl).digest('base64url') !== sg) return null;
     const d = JSON.parse(Buffer.from(pl, 'base64url').toString());
     if (Date.now() > d.exp) return null;
     return { userId: d.userId, pv: d.pv || 1 };

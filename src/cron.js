@@ -27,13 +27,30 @@ async function scheduleWeeklyRecluster() {
   }
 }
 
-function startCron() {
-  // Har 10 daqiqada muddati o'tgan kod/tokenlarni tozalash
-  cleanupExpired();
-  setInterval(cleanupExpired, 10 * 60 * 1000).unref();
-  // Har 7 kunda bir marta klaster birlashtirish vazifasi
-  setInterval(scheduleWeeklyRecluster, 7 * 24 * 60 * 60 * 1000).unref();
-  console.log('⏰ Cron: har 10 daqiqada eskirgan kod/tokenlar tozalanadi');
+// Node/setInterval versiyasi endi yo'q — Workers'da doimiy background process
+// bo'lmaydi. worker/index.js'dagi scheduled() handler (Cron Trigger, har
+// daqiqada) o'rniga runScheduled()ni chaqiradi: cleanupExpired() har safar,
+// scheduleWeeklyRecluster() esa _meta jadvalidagi "oxirgi ishga tushirilgan
+// vaqt" belgisiga qarab haftada bir martagina bajariladi (Workers'da
+// "har 7 kunda bitta setInterval" tushunchasi yo'q, shuning uchun vaqt
+// belgisi bazada saqlanadi).
+async function scheduleWeeklyReclusterIfDue() {
+  try {
+    const WEEK = 7 * 24 * 60 * 60;
+    const now = Math.floor(Date.now() / 1000);
+    const row = await db.get("SELECT v FROM _meta WHERE k='last_weekly_recluster'", []);
+    const last = row ? Number(row.v) : 0;
+    if (now - last < WEEK) return;
+    await scheduleWeeklyRecluster();
+    await db.run("INSERT INTO _meta(k,v) VALUES('last_weekly_recluster',$1) ON CONFLICT (k) DO UPDATE SET v=EXCLUDED.v", [String(now)]);
+  } catch (e) {
+    console.error('cron scheduleWeeklyReclusterIfDue:', e.message);
+  }
 }
 
-module.exports = { startCron, cleanupExpired };
+async function runScheduled() {
+  await cleanupExpired();
+  await scheduleWeeklyReclusterIfDue();
+}
+
+module.exports = { runScheduled, cleanupExpired };
