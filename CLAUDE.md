@@ -106,6 +106,26 @@ R2_PUBLIC_URL
   ustunlariga id kabi unikal tiebreaker qo'sh, (2) cast turlarini haqiqiy
   hisoblangan ustun turi bilan mosla (float8 ustunni real'ga cast qilma).
 
+## Feed formatlash: N+1 query va fmtPostsBatch/fmtCmtsBatch
+- Post/izoh ro'yxatlarini JSON javobga tayyorlashda (ovoz, saqlangan, so'rovnoma,
+  klaster ma'lumoti) HAR BIR qator uchun alohida so'rov yubormang — bu N+1 query
+  (25 postlik sahifada 100+ ketma-ket DB murojaati bo'lishi mumkin edi).
+  src/routes.js#fmtPostsBatch/fmtCmtsBatch shu ma'lumotlarni sahifadagi BARCHA
+  postlar/izohlar uchun bir nechta `WHERE id = ANY($1::text[])` so'rovida birdaniga
+  oladi, keyin Map/Set orqali xotirada har bir qatorga mos qo'yadi.
+- fmtPost/fmtCmt (bitta element uchun) hali ham post/izoh DETAIL sahifasida
+  qoladi (bitta postni ochish, bitta izohni qaytarish) — faqat RO'YXAT
+  qaytaradigan joylarda (feed, profil, qidiruv, saqlanganlar) batch versiyasi
+  ishlatiladi.
+- Yangi Q.*Batch funksiyasi qo'shsang: bo'sh massiv/user_id yo'qligida SQL'ga
+  murojaat qilmasdan `Promise.resolve([])` qaytar (ANY($1) bo'sh massiv bilan
+  ham ishlaydi, lekin keraksiz round-trip'dan saqlanish uchun).
+- GET /api/posts (umumiy feed)da maxfiy jamoa postlarini filtrlash uchun
+  ilgari har bir post uchun alohida `SELECT is_private FROM communities...`
+  so'rovi yuborilardi. Endi is_private ustuni to'g'ridan-to'g'ri pHot/pNew
+  so'rovining JOIN'idan keladi (qo'shimcha so'rovsiz), a'zolik esa sahifadagi
+  BARCHA maxfiy jamoalar uchun bitta Q.memCheckBatch chaqiruvida tekshiriladi.
+
 ## Testlar
 - `npm test` (`node --test`, node:test — tashqi kutubxona kerak emas).
   Haqiqiy PostgreSQL kerak: `DATABASE_URL=postgres://postgres:postgres@localhost:5432/mindhub_test npm test`

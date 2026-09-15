@@ -277,6 +277,8 @@ const Q = {
 
   /* memberships */
   memCheck:  (user_id, community_id) => db.get('SELECT 1 FROM memberships WHERE user_id=$1 AND community_id=$2', [user_id, community_id]),
+  memCheckBatch: (user_id, community_ids) => (!user_id || !community_ids.length) ? Promise.resolve([]) :
+    db.all('SELECT community_id FROM memberships WHERE user_id=$1 AND community_id = ANY($2::text[])', [user_id, community_ids]),
   memJoin:   (user_id, community_id) => db.run('INSERT INTO memberships(user_id,community_id) VALUES($1,$2) ON CONFLICT DO NOTHING', [user_id, community_id]),
   memLeave:  (user_id, community_id) => db.run('DELETE FROM memberships WHERE user_id=$1 AND community_id=$2', [user_id, community_id]),
 
@@ -296,8 +298,13 @@ const Q = {
   // bo'yicha cursor solishtirish shu holatda teng qatorlarni "chegarada" tashlab
   // yuborib, sahifalash o'rtasida postlarni yo'qotadi. p.id (UUID, unikal) uchinchi
   // tiebreaker sifatida qo'shilgan — bu bilan tartiblash har doim to'liq unikal.
+  // c.is_private ham SELECT'ga qo'shilgan — umumiy feed ko'p jamoadan postlarni
+  // aralashtiradi, shuning uchun maxfiy jamoa postlarini filtrlash uchun avval
+  // har bir qator uchun alohida `SELECT is_private FROM communities...` so'rovi
+  // yuborilardi (N+1). Endi JOIN qilingan community allaqachon shu ustunni olib
+  // keladi — qo'shimcha so'rovsiz.
   pHot: (cursor, limit) => db.all(
-    `SELECT p.*,u.username,u.color,u.avatar,c.slug as cslug,c.name as cname,c.color as ccolor,
+    `SELECT p.*,u.username,u.color,u.avatar,c.slug as cslug,c.name as cname,c.color as ccolor,c.is_private,
        (sign(p.score)*log(greatest(abs(p.score),1)) + p.created_at/45000.0) as hot_rank
      FROM posts p JOIN users u ON p.user_id=u.id JOIN communities c ON p.community_id=c.id
      WHERE $1::double precision IS NULL OR (sign(p.score)*log(greatest(abs(p.score),1)) + p.created_at/45000.0, p.created_at, p.id) < ($1::double precision, $2::int, $3::text)
@@ -305,7 +312,7 @@ const Q = {
     [cursor?.hs ?? null, cursor?.ct ?? null, cursor?.id ?? null, limit]
   ),
   pNew: (cursor, limit) => db.all(
-    `SELECT p.*,u.username,u.color,u.avatar,c.slug as cslug,c.name as cname,c.color as ccolor
+    `SELECT p.*,u.username,u.color,u.avatar,c.slug as cslug,c.name as cname,c.color as ccolor,c.is_private
      FROM posts p JOIN users u ON p.user_id=u.id JOIN communities c ON p.community_id=c.id
      WHERE $1::int IS NULL OR (p.created_at, p.id) < ($1::int, $2::text)
      ORDER BY p.created_at DESC, p.id DESC LIMIT $3`,
@@ -353,11 +360,17 @@ const Q = {
   pvUpsert: (user_id, post_id, vote) => db.run('INSERT INTO post_votes(user_id,post_id,vote) VALUES($1,$2,$3) ON CONFLICT (user_id,post_id) DO UPDATE SET vote=EXCLUDED.vote', [user_id, post_id, vote]),
   pvDelete: (user_id, post_id) => db.run('DELETE FROM post_votes WHERE user_id=$1 AND post_id=$2', [user_id, post_id]),
   pvCount:  (post_id) => db.get('SELECT COALESCE(SUM(CASE WHEN vote=1 THEN 1 ELSE 0 END),0)::int as up,COALESCE(SUM(CASE WHEN vote=-1 THEN 1 ELSE 0 END),0)::int as dn FROM post_votes WHERE post_id=$1', [post_id]),
+  // Batch: bitta feed sahifasidagi HAMMA post uchun mening ovozimni bitta so'rovda olish
+  // (har bir post uchun alohida pvGet chaqirish — N+1 query — o'rniga). fmtPostsBatch'da ishlatiladi.
+  pvGetBatch: (user_id, post_ids) => (!user_id || !post_ids.length) ? Promise.resolve([]) :
+    db.all('SELECT post_id, vote FROM post_votes WHERE user_id=$1 AND post_id = ANY($2::text[])', [user_id, post_ids]),
 
   /* saved */
   svCheck:  (user_id, post_id) => db.get('SELECT 1 FROM saved_posts WHERE user_id=$1 AND post_id=$2', [user_id, post_id]),
   svInsert: (user_id, post_id) => db.run('INSERT INTO saved_posts(user_id,post_id) VALUES($1,$2) ON CONFLICT DO NOTHING', [user_id, post_id]),
   svDelete: (user_id, post_id) => db.run('DELETE FROM saved_posts WHERE user_id=$1 AND post_id=$2', [user_id, post_id]),
+  svCheckBatch: (user_id, post_ids) => (!user_id || !post_ids.length) ? Promise.resolve([]) :
+    db.all('SELECT post_id FROM saved_posts WHERE user_id=$1 AND post_id = ANY($2::text[])', [user_id, post_ids]),
 
   /* comments */
   cmByPost: (post_id) => db.all('SELECT cm.*,u.username,u.color,u.avatar FROM comments cm JOIN users u ON cm.user_id=u.id WHERE cm.post_id=$1 ORDER BY cm.is_solution DESC,cm.score DESC,cm.created_at ASC', [post_id]),
@@ -373,6 +386,8 @@ const Q = {
   cvUpsert: (user_id, comment_id, vote) => db.run('INSERT INTO comment_votes(user_id,comment_id,vote) VALUES($1,$2,$3) ON CONFLICT (user_id,comment_id) DO UPDATE SET vote=EXCLUDED.vote', [user_id, comment_id, vote]),
   cvDelete: (user_id, comment_id) => db.run('DELETE FROM comment_votes WHERE user_id=$1 AND comment_id=$2', [user_id, comment_id]),
   cvCount:  (comment_id) => db.get('SELECT COALESCE(SUM(CASE WHEN vote=1 THEN 1 ELSE 0 END),0)::int as up,COALESCE(SUM(CASE WHEN vote=-1 THEN 1 ELSE 0 END),0)::int as dn FROM comment_votes WHERE comment_id=$1', [comment_id]),
+  cvGetBatch: (user_id, comment_ids) => (!user_id || !comment_ids.length) ? Promise.resolve([]) :
+    db.all('SELECT comment_id, vote FROM comment_votes WHERE user_id=$1 AND comment_id = ANY($2::text[])', [user_id, comment_ids]),
 
   /* follows */
   fwCheck:     (follower_id, following_id) => db.get('SELECT 1 FROM follows WHERE follower_id=$1 AND following_id=$2', [follower_id, following_id]),
@@ -403,6 +418,14 @@ const Q = {
   pollVoteIns: (user_id, poll_id, option_index) => db.run('INSERT INTO poll_votes(user_id,poll_id,option_index) VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [user_id, poll_id, option_index]),
   pollVoteCnt: (poll_id) => db.all('SELECT option_index,COUNT(*)::int as cnt FROM poll_votes WHERE poll_id=$1 GROUP BY option_index', [poll_id]),
   pollTotalVotes: (poll_id) => db.get('SELECT COUNT(*)::int as c FROM poll_votes WHERE poll_id=$1', [poll_id]),
+  pollGetBatch: (post_ids) => !post_ids.length ? Promise.resolve([]) :
+    db.all('SELECT * FROM polls WHERE post_id = ANY($1::text[])', [post_ids]),
+  pollVoteCntBatch: (poll_ids) => !poll_ids.length ? Promise.resolve([]) :
+    db.all('SELECT poll_id, option_index, COUNT(*)::int as cnt FROM poll_votes WHERE poll_id = ANY($1::text[]) GROUP BY poll_id, option_index', [poll_ids]),
+  pollTotalVotesBatch: (poll_ids) => !poll_ids.length ? Promise.resolve([]) :
+    db.all('SELECT poll_id, COUNT(*)::int as c FROM poll_votes WHERE poll_id = ANY($1::text[]) GROUP BY poll_id', [poll_ids]),
+  pollVoteGetBatch: (user_id, poll_ids) => (!user_id || !poll_ids.length) ? Promise.resolve([]) :
+    db.all('SELECT poll_id, option_index FROM poll_votes WHERE user_id=$1 AND poll_id = ANY($2::text[])', [user_id, poll_ids]),
 
   /* push tokens */
   pushIns:    (user_id, token) => db.run('INSERT INTO push_tokens(user_id,token) VALUES($1,$2) ON CONFLICT DO NOTHING', [user_id, token]),
@@ -485,6 +508,8 @@ const Q = {
   /* clusters */
   clInsert:  (id, title, summary, centroid, kind) => db.run('INSERT INTO clusters(id,title,summary,centroid,kind,member_count,unique_users,last_activity_at) VALUES($1,$2,$3,$4,$5,1,1,extract(epoch from now())::int)', [id, title, summary || '', JSON.stringify(centroid), kind || 'problem']),
   clById:    (id) => db.get('SELECT * FROM clusters WHERE id=$1', [id]),
+  clByIdBatch: (ids) => !ids.length ? Promise.resolve([]) :
+    db.all('SELECT * FROM clusters WHERE id = ANY($1::text[])', [ids]),
   clAllActive: () => db.all("SELECT id,centroid,member_count FROM clusters WHERE status!='archived'"),
   clUpdateAfterJoin: (id, centroid, memberCount, uniqueUsers) => db.run('UPDATE clusters SET centroid=$1,member_count=$2,unique_users=$3,last_activity_at=extract(epoch from now())::int WHERE id=$4', [JSON.stringify(centroid), memberCount, uniqueUsers, id]),
   clUpdateSummary: (id, title, summary) => db.run('UPDATE clusters SET title=$1,summary=$2 WHERE id=$3', [title, summary, id]),
@@ -516,6 +541,11 @@ const Q = {
   clmUniqueUsers: (cluster_id) => db.get('SELECT COUNT(DISTINCT user_id)::int as c FROM cluster_members WHERE cluster_id=$1', [cluster_id]),
   clmSamplePosts: (cluster_id, limit) => db.all('SELECT p.id,p.title,p.created_at,u.username FROM cluster_members cm JOIN posts p ON cm.post_id=p.id JOIN users u ON p.user_id=u.id WHERE cm.cluster_id=$1 ORDER BY cm.joined_at DESC LIMIT $2', [cluster_id, limit]),
   clmByPostId: (post_id) => db.get('SELECT * FROM cluster_members WHERE post_id=$1', [post_id]),
+  // DISTINCT ON (post_id) — clmByPostId kabi har bir post uchun bittagina qatorni qaytaradi
+  // (nazariy jihatdan bitta post bir nechta klasterga a'zo bo'lishi mumkin emas, lekin
+  // shunga qaramay bitta post_id uchun bir nechta qator qaytarilib qolsa ham xavfsiz).
+  clmByPostIdBatch: (post_ids) => !post_ids.length ? Promise.resolve([]) :
+    db.all('SELECT DISTINCT ON (post_id) post_id, cluster_id FROM cluster_members WHERE post_id = ANY($1::text[]) ORDER BY post_id, joined_at DESC', [post_ids]),
   clmForUserClusters: (user_id) => db.all('SELECT DISTINCT cluster_id FROM cluster_members WHERE user_id=$1', [user_id]),
   clmCountForUser: (user_id) => db.get('SELECT COUNT(DISTINCT cluster_id)::int as c FROM cluster_members WHERE user_id=$1', [user_id]),
 

@@ -230,6 +230,88 @@ async function fmtCmt(c, uid2) {
   const myVote = uid2 ? (await Q.cvGet(uid2, c.id))?.vote || 0 : 0;
   return { ...c, my_vote: myVote, ago: ago(c.created_at) };
 }
+// Feed/ro'yxat javoblari uchun batch formatlash — fmtPost/fmtCmt'ni har bir
+// qator uchun alohida chaqirish o'rniga (N+1 query muammosi: 25 postlik
+// sahifada har biri uchun 3-8 ta so'rov = 100+ ketma-ket DB murojaati).
+// Bu yerda ovoz/saqlangan/so'rovnoma/klaster ma'lumotlari ANY($1) orqali
+// bitta so'rovda hammasi uchun birdaniga olinadi, keyin xotirada (Map/Set)
+// har bir qatorga mos qo'yiladi.
+async function fmtPostsBatch(rows, uid2) {
+  if (!rows.length) return [];
+  const postIds = rows.map(r => r.id);
+  const [voteRows, savedRows, pollRows] = await Promise.all([
+    Q.pvGetBatch(uid2, postIds),
+    Q.svCheckBatch(uid2, postIds),
+    Q.pollGetBatch(postIds)
+  ]);
+  const voteMap  = new Map(voteRows.map(v => [v.post_id, v.vote]));
+  const savedSet = new Set(savedRows.map(s => s.post_id));
+  const pollByPost = new Map(pollRows.map(pr => [pr.post_id, pr]));
+
+  const pollIds = pollRows.map(pr => pr.id);
+  const [cntRows, totalRows, myVoteRows] = await Promise.all([
+    Q.pollVoteCntBatch(pollIds),
+    Q.pollTotalVotesBatch(pollIds),
+    Q.pollVoteGetBatch(uid2, pollIds)
+  ]);
+  const cntByPoll = new Map();
+  for (const r of cntRows) {
+    if (!cntByPoll.has(r.poll_id)) cntByPoll.set(r.poll_id, {});
+    cntByPoll.get(r.poll_id)[r.option_index] = r.cnt;
+  }
+  const totalByPoll  = new Map(totalRows.map(r => [r.poll_id, r.c]));
+  const myVoteByPoll = new Map(myVoteRows.map(r => [r.poll_id, r.option_index]));
+
+  // Klaster ma'lumoti — faqat muammo/g'oya postlari uchun
+  const clusterPostIds = rows.filter(r => r.kind === 'problem' || r.kind === 'idea').map(r => r.id);
+  const clmRows = await Q.clmByPostIdBatch(clusterPostIds);
+  const clusterIdByPost = new Map(clmRows.map(c => [c.post_id, c.cluster_id]));
+  const clusterIds = [...new Set(clmRows.map(c => c.cluster_id))];
+  const clRows = await Q.clByIdBatch(clusterIds);
+  const clByIdMap = new Map(clRows.map(c => [c.id, c]));
+
+  return rows.map(p => {
+    const myVote = voteMap.get(p.id) || 0;
+    const saved  = savedSet.has(p.id);
+    let poll = null;
+    const pollRow = pollByPost.get(p.id);
+    if (pollRow) {
+      try {
+        const options = JSON.parse(pollRow.options);
+        const counts  = cntByPoll.get(pollRow.id) || {};
+        const total   = totalByPoll.get(pollRow.id) || 0;
+        const myVoteIdx = myVoteByPoll.has(pollRow.id) ? myVoteByPoll.get(pollRow.id) : -1;
+        poll = {
+          id: pollRow.id,
+          question: pollRow.question,
+          options: options.map((opt, i) => ({
+            text: opt,
+            votes: counts[i] || 0,
+            pct: total > 0 ? Math.round((counts[i]||0)/total*100) : 0
+          })),
+          total,
+          my_vote: myVoteIdx,
+          ends_at: pollRow.ends_at,
+          ended: pollRow.ends_at < Math.floor(Date.now()/1000)
+        };
+      } catch {}
+    }
+    let clusterInfo = { cluster_id: null, cluster_title: null, cluster_size: null };
+    const cid = clusterIdByPost.get(p.id);
+    if (cid) {
+      const cl = clByIdMap.get(cid);
+      if (cl) clusterInfo = { cluster_id: cl.id, cluster_title: cl.title, cluster_size: cl.member_count };
+    }
+    return { ...p, my_vote: myVote, saved, poll, ...clusterInfo, ago: ago(p.created_at) };
+  });
+}
+async function fmtCmtsBatch(rows, uid2) {
+  if (!rows.length) return [];
+  const ids = rows.map(c => c.id);
+  const voteRows = await Q.cvGetBatch(uid2, ids);
+  const voteMap = new Map(voteRows.map(v => [v.comment_id, v.vote]));
+  return rows.map(c => ({ ...c, my_vote: voteMap.get(c.id) || 0, ago: ago(c.created_at) }));
+}
 function fmtNotif(n) {
   return { ...n, ago: ago(n.created_at) };
 }
@@ -593,8 +675,7 @@ async function route(req, res) {
     const user  = await Q.uBySlug(param);
     if (!user) return json(res, { error: 'Topilmadi' }, 404);
     const postRows = await Q.pByUser(user.id);
-    const posts = [];
-    for (const r of postRows) posts.push(await fmtPost(r, u2));
+    const posts = await fmtPostsBatch(postRows, u2);
     const followers = (await Q.fwFollowers(user.id)).c;
     const following = (await Q.fwFollowing(user.id)).c;
     const is_following = u2 ? !!(await Q.fwCheck(u2, user.id)) : false;
@@ -835,17 +916,14 @@ async function route(req, res) {
     const limit  = Math.min(parseInt(q.limit) || 25, 50);
     const cursor = decodeCursor(q.cursor);
     const rows = sort === 'new' ? await Q.pNew(cursor, limit) : await Q.pHot(cursor, limit);
-    const out = [];
-    for (const r of rows) {
-      if (r.community_id) {
-        const pc = await db.get('SELECT is_private FROM communities WHERE id=$1', [r.community_id]);
-        if (pc && pc.is_private) {
-          const isMember = u2 ? !!(await Q.memCheck(u2, r.community_id)) : false;
-          if (!isMember) continue;
-        }
-      }
-      out.push(await fmtPost(r, u2));
-    }
+    // Maxfiy jamoa postlarini filtrlash: is_private allaqachon pHot/pNew JOIN'idan
+    // kelgan (qo'shimcha so'rovsiz) — a'zolik esa shu sahifadagi maxfiy jamoalar
+    // uchun BITTA batch so'rovda tekshiriladi (har bir post uchun alohida emas).
+    const privateComIds = [...new Set(rows.filter(r => r.is_private && r.community_id).map(r => r.community_id))];
+    const memberRows = await Q.memCheckBatch(u2, privateComIds);
+    const memberSet = new Set(memberRows.map(mr => mr.community_id));
+    const visibleRows = rows.filter(r => !r.is_private || memberSet.has(r.community_id));
+    const out = await fmtPostsBatch(visibleRows, u2);
     const last = rows[rows.length - 1];
     const nextCursor = (last && rows.length >= limit)
       ? encodeCursor(sort === 'new' ? { ct: last.created_at, id: last.id } : { hs: last.hot_rank, ct: last.created_at, id: last.id })
@@ -855,8 +933,7 @@ async function route(req, res) {
   if (p === '/api/posts/saved' && m === 'GET') {
     const u2 = await getAuth(req); if (!u2) return json(res, { error: 'Unauthorized' }, 401);
     const rows = await Q.pSaved(u2);
-    const out = [];
-    for (const r of rows) out.push(await fmtPost(r, u2));
+    const out = await fmtPostsBatch(rows, u2);
     return json(res, out);
   }
   if (p.match(/^\/api\/posts\/[^/]+$/) && m === 'GET') {
@@ -864,8 +941,7 @@ async function route(req, res) {
     const post = await Q.pOne(p.split('/')[3]);
     if (!post) return json(res, { error: 'Topilmadi' }, 404);
     const cm = await Q.cmByPost(post.id);
-    const comments = [];
-    for (const c of cm) comments.push(await fmtCmt(c, u2));
+    const comments = await fmtCmtsBatch(cm, u2);
     return json(res, { ...await fmtPost(post, u2), comments });
   }
   if (p === '/api/posts' && m === 'POST') {
@@ -1014,8 +1090,7 @@ async function route(req, res) {
       if (!isMember && u2 !== com.owner_id) return json(res, { error: "Maxfiy jamoa, a'zo bo'ling" }, 403);
     }
     const rows = sort === 'new' ? await Q.pComNew(slug, cursor, limit) : await Q.pCom(slug, cursor, limit);
-    const out = [];
-    for (const r of rows) out.push(await fmtPost(r, u2));
+    const out = await fmtPostsBatch(rows, u2);
     const last = rows[rows.length - 1];
     const nextCursor = (last && rows.length >= limit)
       ? encodeCursor(sort === 'new' ? { ct: last.created_at, id: last.id } : { hs: last.hot_rank, ct: last.created_at, id: last.id })
@@ -1423,7 +1498,7 @@ async function route(req, res) {
     let posts = [], users = [], coms = [];
     if (type==='all'||type==='posts') {
       const rows = await Q.pSearch(sq);
-      for (const r of rows) posts.push(await fmtPost(r,u2));
+      posts = await fmtPostsBatch(rows, u2);
     }
     if (type==='all'||type==='users') users = await Q.uSearch('%'+sq+'%','%'+sq+'%');
     if (type==='all'||type==='communities') coms = await Q.comSearch('%'+sq+'%','%'+sq+'%');
