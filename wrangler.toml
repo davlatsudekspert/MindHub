@@ -1,4 +1,4 @@
-name = "mindhub"
+name = "mindhubuz"
 main = "worker/index.js"
 compatibility_date = "2024-11-01"
 compatibility_flags = ["nodejs_compat"]
@@ -12,13 +12,13 @@ not_found_handling = "single-page-application"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "mindhub"
+database_name = "mindhubuz"
 database_id = "REPLACE_WITH_REAL_D1_ID"
 migrations_dir = "migrations/d1"
 
 [[r2_buckets]]
 binding = "R2"
-bucket_name = "mindhub-uploads"
+bucket_name = "mindhubuz-uploads"
 
 [[durable_objects.bindings]]
 name = "WSHUB"
@@ -39,4 +39,7 @@ crons = ["*/1 * * * *"]
 [vars]
 # Maxfiy qiymatlar (SECRET, AI_API_KEY, RESEND_API_KEY va h.k.) bu yerga
 # YOZILMAYDI — ular `wrangler secret put NOM` orqali alohida saqlanadi.
-APP_URL = "https://mindhub.workers.dev"
+# ⚠️ Haqiqiy URL manzilingiz `mindhubuz.<sizning-subdomeningiz>.workers.dev`
+# shaklida bo'ladi (subdomen — Cloudflare hisobingizga bog'liq, `wrangler
+# deploy` natijasida chiqadi). Deploy qilgach shu qiymatni yangilang.
+APP_URL = "https://mindhubuz.workers.dev"
